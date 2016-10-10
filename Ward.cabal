@@ -1,0 +1,24 @@
+name:                Ward
+version:             0.1.0.0
+synopsis:            Static permission checker for C programs.
+description:         See README.md
+homepage:            https://github.com/evincarofautumn/ward#readme
+license:             MIT
+license-file:        LICENSE
+author:              Jon Purdy
+maintainer:          evincarofautumn@gmail.com
+copyright:           2016 Jon Purdy
+category:            Language
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable ward
+  hs-source-dirs:      src
+  main-is:             Main.hs
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  build-depends:       base
+  default-language:    Haskell2010
+
+source-repository head
+  type:     git
+  location: https://github.com/evincarofautumn/ward
