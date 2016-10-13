@@ -11,6 +11,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
 import Data.Set (Set)
 import Data.Text (Text)
+import Data.Traversable (forM)
 import Data.Typeable (Typeable)
 import GHC.Exts (IsString)
 import Language.C (parseCFile)
@@ -29,23 +30,21 @@ import qualified Data.Text as Text
 main :: IO ()
 main = do
   let temporaryDirectory = Nothing
-  let preprocessor = newGCC "gcc"
   args <- getArgs
-  (filePath, preprocessorFlags) <- case args of
-    path : flags -> return (path, flags)
-    [] -> do
-      warn "Usage: ward <path> <flags>"
-      exitFailure
-  result <- parseCFile
-    preprocessor
-    temporaryDirectory
+  (preprocessorPath, filePaths, preprocessorFlags) <- case args of
+    [] -> usage
+    [_] -> usage
+    pp : args -> case break (== "--") args of
+      (paths, flags) -> return (pp, paths, drop 1 flags)
+  let preprocessor = newGCC preprocessorPath
+  results <- forM filePaths $ parseCFile preprocessor temporaryDirectory
     (defaultPreprocessorFlags ++ preprocessorFlags)
-    filePath
-  case result of
+  case sequence results of
     Left parseError -> do
       putStrLn "Parse error:"
       print parseError
-    Right translationUnit -> do
+    Right translationUnits -> do
+      let translationUnit = joinTranslationUnits translationUnits
       let global = globalContextFromTranslationUnit translationUnit
       let symbolTable = globalPermissionActions global
       mapM_ (\ (Ident name _ _, permissions)
@@ -53,6 +52,21 @@ main = do
         $ Map.toList symbolTable
       print $ Map.size $ globalFunctions global
       checkFunctions global
+
+joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
+joinTranslationUnits translationUnits@(CTranslUnit _ firstLocation : _)
+  = CTranslUnit
+    (concat
+      [ externalDeclarations
+      | CTranslUnit externalDeclarations nodeInfo <- translationUnits
+      ])
+    firstLocation
+joinTranslationUnits [] = error "joinTranslationUnits: empty input"
+
+usage :: IO a
+usage = do
+  warn "Usage: ward <preprocessor> <sources> [-- <preprocessor flags>]"
+  exitFailure
 
 warn :: String -> IO ()
 warn = putStrLn
