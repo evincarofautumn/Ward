@@ -24,7 +24,6 @@ import Language.C.Syntax.AST -- *
 import Language.C.System.GCC (newGCC)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.IO (hPutStrLn, stderr)
 import Text.PrettyPrint (render)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -81,7 +80,7 @@ joinTranslationUnits translationUnits@(CTranslUnit _ firstLocation : _)
   = CTranslUnit
     (concat
       [ externalDeclarations
-      | CTranslUnit externalDeclarations nodeInfo <- translationUnits
+      | CTranslUnit externalDeclarations _ <- translationUnits
       ])
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
@@ -148,7 +147,7 @@ checkFunctions global implicitPermissions
 
       -- label: stmt
       -- TODO: Accumulate labels for gotos?
-      CLabel label statement attributes _ -> do
+      CLabel _label statement _attributes _ -> do
         checkStatement local statement
 
       -- case expr: stmt
@@ -158,7 +157,7 @@ checkFunctions global implicitPermissions
 
       -- case lower ... upper: stmt
       -- GNU extension, maybe don't bother to support?
-      CCases lower upper statement _ -> do
+      CCases _lower _upper statement _ -> do
         checkStatement local statement
 
       -- default: stmt
@@ -190,12 +189,19 @@ checkFunctions global implicitPermissions
       -- switch (expr) body
       -- Traverse all branches in body and take their union.
       CSwitch scrutinee body _ -> do
-        checkStatement local body
+        local' <- checkExpression local scrutinee
+        checkStatement local' body
 
       -- while (expr) stmt / do stmt while (expr);
       -- Treat as if (expr) stmt else ;
       CWhile condition body isDoWhile _ -> do
-        checkStatement local body
+        if isDoWhile
+          then do
+            local' <- checkStatement local body
+            checkExpression local' condition
+          else do
+            local' <- checkExpression local condition
+            checkStatement local' body
 
       -- for (init; expr; expr) stmt
       -- Treat as init; while (expr) { stmt; expr; } ...maybe?
@@ -213,10 +219,11 @@ checkFunctions global implicitPermissions
 
       -- goto label;
       -- Do something magic with control flow? Or just bail out.
-      CGoto label _ -> return local
+      CGoto _label _ -> return local
 
       -- goto expr;
-      CGotoPtr expression _ -> return local
+      CGotoPtr expression _ -> do
+        checkExpression local expression
 
       -- continue;
       -- Unify remainder of loop with whole loop?
@@ -307,7 +314,7 @@ checkFunctions global implicitPermissions
         local' <- checkExpression local function
         local'' <- foldlM checkExpression local' arguments
         case function of
-          CVar ident@(Ident name _ _) _
+          CVar ident _
             -> case Map.lookup ident $ globalPermissionActions global of
               Just permissionActions -> do
 {-
@@ -445,9 +452,6 @@ newtype Permission = Permission Text
 instance Show Permission where
   show (Permission name) = Text.unpack name
 
-defaultPermissions :: [Permission]
-defaultPermissions = ["alloc", "fail", "signal_unsafe"]
-
 defaultPreprocessorFlags :: [String]
 defaultPreprocessorFlags = ["-D__WARD__"]
 
@@ -548,7 +552,7 @@ insertTopLevelElement element global = case element of
   -- For a function definition, record the function body in the context.
   -- TODO: parse attributes from parameters
   CFDefExt definition@(CFunDef specifiers
-    (CDeclr (Just ident) _ _ _ _) _parameters body _) -> global
+    (CDeclr (Just ident) _ _ _ _) parameters _body _) -> global
       { globalPermissionActions = Map.insertWith (<>)
         ident specifierPermissions $ globalPermissionActions global
       , globalFunctions = Map.insert ident definition
@@ -565,6 +569,7 @@ extractDeclaratorPermissionActions
   :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)] -> [(Ident, Set PermissionAction)]
 extractDeclaratorPermissionActions = foldr go []
   where
+    -- TODO: Do something with derived declarators?
     go (Just (CDeclr (Just ident) derived _ attributes _), _, _) acc
       | Set.null permissionActions = acc
       | otherwise = (ident, permissionActions) : acc
