@@ -128,7 +128,7 @@ checkFunctions global implicitPermissions
           <> extractPermissionActions
             [attr | CTypeQual (CAttrQual attr) <- specifiers]
       putStrLn $ "Granting: " ++ show permissionActions
-      -- Grant needed permissions locally.
+      -- Grant/waive permissions locally.
       local' <- foldlM applyPreAction local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
@@ -373,14 +373,18 @@ checkFunctions global implicitPermissions
         CInitList initializers _ -> checkInitializerList local initializers
 
     applyPreAction :: LocalContext -> PermissionAction -> IO LocalContext
-    applyPreAction local (PermissionAction action permission)
-      | action /= Grant = do
-      applyPermissionAction NoReason local (PermissionAction Grant permission)
-    applyPreAction local _ = return local
+    applyPreAction local (PermissionAction action permission) = case action of
+      Need -> applyPermissionAction NoReason local
+        $ PermissionAction Grant permission
+      Grant -> return local
+      Revoke -> return local  -- FIXME: Not sure if this is correct.
+      Waive -> applyPermissionAction NoReason local
+        $ PermissionAction Revoke permission
 
     applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> IO LocalContext
-    applyPermissionAction reason local (PermissionAction action permission) = do
-      case action of
+    applyPermissionAction reason local (PermissionAction action permission)
+      = case action of
+
         Need
           | permission `Set.member` localPermissionState local
           -> return local
@@ -394,6 +398,7 @@ checkFunctions global implicitPermissions
               , show $ Set.toList $ localPermissionState local
               ]
             return local
+
         Grant
           | permission `Set.member` localPermissionState local -> do
             warn $ concat
@@ -406,6 +411,7 @@ checkFunctions global implicitPermissions
           | otherwise -> return local
             { localPermissionState = Set.insert permission
               $ localPermissionState local }
+
         Revoke
           | permission `Set.member` localPermissionState local
           -> return local { localPermissionState = Set.delete permission
@@ -418,6 +424,9 @@ checkFunctions global implicitPermissions
               , show $ Set.toList $ localPermissionState local
               ]
             return local
+
+        -- Local waiving of permissions has no effect on the outer context.
+        Waive -> return local
 
 -- | Verifies that two local contexts match, using a prior context to produce
 -- detailed warnings in the event of a mismatch.
@@ -480,6 +489,11 @@ data Action
   -- | The context must contain the given permission. After this action, it will
   -- be removed from the context.
   | Revoke
+
+  -- | The context may contain the given permission. During this function, it
+  -- will be removed from the context. This can be used to waive permissions
+  -- implicitly granted by "--grant".
+  | Waive
   deriving (Eq, Ord)
 
 instance Show Action where
@@ -487,6 +501,7 @@ instance Show Action where
     Need -> "need"
     Grant -> "grant"
     Revoke -> "revoke"
+    Waive -> "waive"
 
 data GlobalContext = GlobalContext
   { globalPermissionActions :: !(Map Ident (Set PermissionAction))
@@ -586,5 +601,6 @@ extractPermissionActions attributes = Set.fromList $ do
     "need" -> return Need
     "grant" -> return Grant
     "revoke" -> return Revoke
+    "waive" -> return Waive
     _ -> throw $ UnknownPermissionActionException actionName
   return $ PermissionAction action $ Permission $ Text.pack permission
