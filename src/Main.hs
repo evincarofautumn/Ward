@@ -244,7 +244,9 @@ checkFunctions global implicitPermissions
     checkBlockItem :: LocalContext -> CBlockItem -> IO LocalContext
     checkBlockItem local = \ case
       CBlockStmt statement -> checkStatement local statement
-      CBlockDecl declaration -> return local  -- TODO: checkLocalDeclaration
+      CBlockDecl (CDecl _specifiers declarations _)
+        -> foldlM checkInitializer local
+          [initializer | (_, Just initializer, _) <- declarations]
       -- GNU nested function
       CNestedFunDef{} -> return local
 
@@ -367,10 +369,13 @@ checkFunctions global implicitPermissions
       CBuiltinExpr{} -> return local
 
     checkInitializerList :: LocalContext -> CInitList -> IO LocalContext
-    checkInitializerList = foldlM
-      $ \ local (_partDesignators, initializer) -> case initializer of
-        CInitExpr expression _ -> checkExpression local expression
-        CInitList initializers _ -> checkInitializerList local initializers
+    checkInitializerList = foldlM $ \ local (_partDesignators, initializer)
+      -> checkInitializer local initializer
+
+    checkInitializer :: LocalContext -> CInit -> IO LocalContext
+    checkInitializer local = \ case
+      CInitExpr expression _ -> checkExpression local expression
+      CInitList initializers _ -> checkInitializerList local initializers
 
     applyPreAction :: LocalContext -> PermissionAction -> IO LocalContext
     applyPreAction local (PermissionAction action permission) = case action of
