@@ -4,8 +4,11 @@
 
 module Main (main) where
 
+import Control.Arrow (second)
 import Control.Exception (Exception, throw)
+import Control.Applicative ((<|>))
 import Data.Foldable (foldlM, traverse_)
+import Data.List (partition, stripPrefix)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
@@ -31,11 +34,18 @@ main :: IO ()
 main = do
   let temporaryDirectory = Nothing
   args <- getArgs
-  (preprocessorPath, filePaths, preprocessorFlags) <- case args of
+  (preprocessorPath, filePaths, wardFlags, preprocessorFlags) <- case args of
     [] -> usage
     [_] -> usage
-    pp : args -> case break (== "--") args of
-      (paths, flags) -> return (pp, paths, drop 1 flags)
+    pp : rest -> let
+      (wardArgs, ppFlags) = second (drop 1) $ break (== "--") rest
+      (flags, paths) = partition (\ case '-' : _ -> True; _ -> False) wardArgs
+      in return (pp, paths, traverse parseFlag flags, ppFlags)
+  parsedFlags <- case wardFlags of
+    Left flagError -> do
+      warn $ concat ["Unknown flag '", flagError, "'"]
+      usage
+    Right parsed -> return parsed
   let preprocessor = newGCC preprocessorPath
   results <- forM filePaths $ parseCFile preprocessor temporaryDirectory
     (defaultPreprocessorFlags ++ preprocessorFlags)
@@ -44,14 +54,27 @@ main = do
       putStrLn "Parse error:"
       print parseError
     Right translationUnits -> do
-      let translationUnit = joinTranslationUnits translationUnits
-      let global = globalContextFromTranslationUnit translationUnit
-      let symbolTable = globalPermissionActions global
+      let
+        -- FIXME: Avoid collisions with static definitions.
+        translationUnit = joinTranslationUnits translationUnits
+        global = globalContextFromTranslationUnit translationUnit
+        symbolTable = globalPermissionActions global
       mapM_ (\ (Ident name _ _, permissions)
         -> putStrLn $ show name ++ ": " ++ show (Set.toList permissions))
         $ Map.toList symbolTable
       print $ Map.size $ globalFunctions global
-      checkFunctions global
+      checkFunctions global $ Set.fromList
+        [ Permission $ Text.pack permission
+        | GrantFlag permission <- parsedFlags
+        ]
+
+data Flag = GrantFlag String
+
+parseFlag :: String -> Either String Flag
+parseFlag arg = maybe (Left arg) Right
+  $ try GrantFlag "--grant=" <|> try GrantFlag "-G"
+  where
+    try f prefix = f <$> stripPrefix prefix arg
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits translationUnits@(CTranslUnit _ firstLocation : _)
@@ -65,16 +88,36 @@ joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
 usage :: IO a
 usage = do
-  warn "Usage: ward <preprocessor> <sources> [-- <preprocessor flags>]"
+  warn "\
+\SYNOPSIS\n\
+\    ward <cpp> <path>* [--grant=<perm> | -G<perm>] [-- <flags>]\n\
+\\n\
+\OPTIONS\n\
+\    <cpp>\n\
+\        Name of preprocessor (gcc)\n\
+\\n\
+\    <path>\n\
+\        Path to C translation unit (foo.c)\n\
+\\n\
+\    <flags>\n\
+\        Flags for C preprocessor (-D HAVE_FOO -I /bar/baz)\n\
+\\n\
+\    --grant=<perm>\n\
+\    -G<perm>\n\
+\        Implicitly grant <perm> unless explicitly waived.\n\
+\\&"
   exitFailure
 
 warn :: String -> IO ()
 warn = putStrLn
 
-checkFunctions :: GlobalContext -> IO ()
-checkFunctions global
-  = traverse_ (checkFunction mempty) $ globalFunctions global
+checkFunctions :: GlobalContext -> Set Permission -> IO ()
+checkFunctions global implicitPermissions
+  = traverse_ (checkFunction initialLocal) $ globalFunctions global
   where
+
+    initialLocal :: LocalContext
+    initialLocal = mempty { localPermissionState = implicitPermissions }
 
     checkFunction :: LocalContext -> CFunDef -> IO ()
     checkFunction local (CFunDef specifiers
