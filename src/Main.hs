@@ -56,16 +56,18 @@ main = do
       let
         -- FIXME: Avoid collisions with static definitions.
         translationUnit = joinTranslationUnits translationUnits
-        global = globalContextFromTranslationUnit translationUnit
+        implicitPermissions = Set.fromList
+          [ Permission $ Text.pack permission
+          | GrantFlag permission <- parsedFlags
+          ]
+        global = globalContextFromTranslationUnit
+          implicitPermissions translationUnit
         symbolTable = globalPermissionActions global
       mapM_ (\ (Ident name _ _, permissions)
         -> putStrLn $ show name ++ ": " ++ show (Set.toList permissions))
         $ Map.toList symbolTable
       print $ Map.size $ globalFunctions global
-      checkFunctions global $ Set.fromList
-        [ Permission $ Text.pack permission
-        | GrantFlag permission <- parsedFlags
-        ]
+      checkFunctions global
 
 data Flag = GrantFlag String
 
@@ -110,14 +112,10 @@ usage = do
 warn :: String -> IO ()
 warn = putStrLn
 
-checkFunctions :: GlobalContext -> Set Permission -> IO ()
-checkFunctions global implicitPermissions
-  = traverse_ (checkFunction initialLocal) $ globalFunctions global
+checkFunctions :: GlobalContext -> IO ()
+checkFunctions global
+  = traverse_ (checkFunction mempty) $ globalFunctions global
   where
-
-    initialLocal :: LocalContext
-    initialLocal = mempty { localPermissionState = implicitPermissions }
-
     checkFunction :: LocalContext -> CFunDef -> IO ()
     checkFunction local (CFunDef specifiers
       declarator@(CDeclr (Just ident) _ _ _ _) parameters body _) = do
@@ -383,8 +381,10 @@ checkFunctions global implicitPermissions
         $ PermissionAction Grant permission
       Grant -> return local
       Revoke -> return local  -- FIXME: Not sure if this is correct.
+      {-
       Waive -> applyPermissionAction NoReason local
         $ PermissionAction Revoke permission
+      -}
 
     applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> IO LocalContext
     applyPermissionAction reason local (PermissionAction action permission)
@@ -545,9 +545,12 @@ instance Show PermissionAction where
   show (PermissionAction action permission)
     = concat [show action, "(", show permission, ")"]
 
-globalContextFromTranslationUnit :: CTranslUnit -> GlobalContext
-globalContextFromTranslationUnit (CTranslUnit externalDeclarations _)
-  = foldr insertTopLevelElement mempty externalDeclarations
+globalContextFromTranslationUnit
+  :: Set Permission -> CTranslUnit -> GlobalContext
+globalContextFromTranslationUnit
+  implicitPermissions (CTranslUnit externalDeclarations _)
+  = foldr (insertTopLevelElement implicitPermissions)
+    mempty externalDeclarations
 
 data WardException
   = UnknownPermissionActionException String
@@ -555,12 +558,13 @@ data WardException
 
 instance Exception WardException
 
-insertTopLevelElement :: CExtDecl -> GlobalContext -> GlobalContext
-insertTopLevelElement element global = case element of
+insertTopLevelElement
+  :: Set Permission -> CExtDecl -> GlobalContext -> GlobalContext
+insertTopLevelElement implicitPermissions element global = case element of
 
   -- For an external declaration, record the permission actions in the context.
   CDeclExt (CDecl specifiers fullDeclarators _) -> global
-    { globalPermissionActions = foldr (uncurry (Map.insertWith (<>)))
+    { globalPermissionActions = foldr (uncurry (mapInsertWithOrDefault combine))
       (globalPermissionActions global) identPermissions }
     where
       declaratorPermissions = extractDeclaratorPermissionActions fullDeclarators
@@ -573,7 +577,7 @@ insertTopLevelElement element global = case element of
   -- TODO: parse attributes from parameters
   CFDefExt definition@(CFunDef specifiers
     (CDeclr (Just ident) _ _ _ _) parameters _body _) -> global
-      { globalPermissionActions = Map.insertWith (<>)
+      { globalPermissionActions = mapInsertWithOrDefault combine
         ident specifierPermissions $ globalPermissionActions global
       , globalFunctions = Map.insert ident definition
         $ globalFunctions global
@@ -584,6 +588,29 @@ insertTopLevelElement element global = case element of
 
   CFDefExt{} -> global  -- TODO: warn?
   CAsmExt{} -> global  -- TODO: warn?
+  where
+    combine
+      :: Set PermissionAction
+      -> Maybe (Set PermissionAction)
+      -> Set PermissionAction
+    combine new mOld = newGranted <> case mOld of
+      Nothing -> Set.map (PermissionAction Grant) implicitPermissions Set.\\ newWaived
+      Just old -> old Set.\\ newWaived
+      where
+        newGranted = Set.fromList
+          [ permissionAction
+          | permissionAction@(PermissionAction action _) <- Set.toList new
+          , action /= Waive
+          ]
+        newWaived = Set.fromList
+          [ PermissionAction Grant permission
+          | PermissionAction Waive permission <- Set.toList new
+          ]
+
+mapInsertWithOrDefault
+  :: (Ord k) => (v -> Maybe v -> v) -> k -> v -> Map k v -> Map k v
+mapInsertWithOrDefault combine key new m
+  = Map.insert key (combine new (Map.lookup key m)) m
 
 extractDeclaratorPermissionActions
   :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)] -> [(Ident, Set PermissionAction)]
