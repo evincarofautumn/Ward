@@ -381,9 +381,10 @@ checkFunctions global
         $ PermissionAction Grant permission
       Grant -> return local
       Revoke -> return local  -- FIXME: Not sure if this is correct.
+      Waive -> return local
       {-
-      Waive -> applyPermissionAction NoReason local
-        $ PermissionAction Revoke permission
+        applyPermissionAction NoReason local
+          $ PermissionAction Revoke permission
       -}
 
     applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> IO LocalContext
@@ -406,12 +407,14 @@ checkFunctions global
 
         Grant
           | permission `Set.member` localPermissionState local -> do
+{-
             warn $ concat
               [ "ward warning: granting permission '"
               , show permission
               , "' already present in context "
               , show $ Set.toList $ localPermissionState local
               ]
+-}
             return local
           | otherwise -> return local
             { localPermissionState = Set.insert permission
@@ -423,7 +426,7 @@ checkFunctions global
             $ localPermissionState local }
           | otherwise -> do
             warn $ concat
-              [ "ward warning: revoking permission '"
+              [ "ward error: revoking permission '"
               , show permission
               , "' not present in context "
               , show $ Set.toList $ localPermissionState local
@@ -594,7 +597,7 @@ insertTopLevelElement implicitPermissions element global = case element of
       -> Maybe (Set PermissionAction)
       -> Set PermissionAction
     combine new mOld = newGranted <> case mOld of
-      Nothing -> Set.map (PermissionAction Grant) implicitPermissions Set.\\ newWaived
+      Nothing -> Set.map (PermissionAction Need) implicitPermissions Set.\\ newWaived
       Just old -> old Set.\\ newWaived
       where
         newGranted = Set.fromList
@@ -603,7 +606,7 @@ insertTopLevelElement implicitPermissions element global = case element of
           , action /= Waive
           ]
         newWaived = Set.fromList
-          [ PermissionAction Grant permission
+          [ PermissionAction Need permission
           | PermissionAction Waive permission <- Set.toList new
           ]
 
