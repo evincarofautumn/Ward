@@ -4,8 +4,10 @@ module Check
   ( translationUnits
   ) where
 
-import Control.Exception (throw)
-import Data.Foldable (foldlM, traverse_)
+import Control.Monad (mzero)
+import Control.Monad.Trans.Class (lift)
+import Control.Monad.Trans.List -- *
+import Data.Foldable (foldlM, foldrM, traverse_)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
@@ -50,13 +52,13 @@ instance Monoid LocalContext where
     }
 
 translationUnits :: [CTranslUnit] -> Set Permission -> Logger ()
-translationUnits tus implicitPermissions = let
+translationUnits tus implicitPermissions = do
   -- FIXME: Avoid collisions with static definitions.
-  translationUnit = joinTranslationUnits tus
-  global = globalContextFromTranslationUnit
+  let translationUnit = joinTranslationUnits tus
+  global <- globalContextFromTranslationUnit
     implicitPermissions translationUnit
-  symbolTable = globalPermissionActions global
-  in checkFunctions global
+  let symbolTable = globalPermissionActions global
+  checkFunctions global
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
@@ -75,11 +77,12 @@ checkFunctions global
     checkFunction :: LocalContext -> CFunDef -> Logger ()
     checkFunction local (CFunDef specifiers
       declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _) parameters body _) = do
+      extractedActions <- extractPermissionActions
+        [attr | CTypeQual (CAttrQual attr) <- specifiers]
       let
         permissionActions = fromMaybe mempty
           (Map.lookup ident $ globalPermissionActions global)
-          <> extractPermissionActions
-            [attr | CTypeQual (CAttrQual attr) <- specifiers]
+          <> extractedActions
       record $ Note pos $ Text.pack $ concat
         [ "checking '"
         , name
@@ -422,42 +425,43 @@ unifyBranches pos prior true false
     return union
 
 globalContextFromTranslationUnit
-  :: Set Permission -> CTranslUnit -> GlobalContext
+  :: Set Permission -> CTranslUnit -> Logger GlobalContext
 globalContextFromTranslationUnit
   implicitPermissions (CTranslUnit externalDeclarations _)
-  = foldr (insertTopLevelElement implicitPermissions)
+  = foldrM (insertTopLevelElement implicitPermissions)
     mempty externalDeclarations
 
 insertTopLevelElement
-  :: Set Permission -> CExtDecl -> GlobalContext -> GlobalContext
+  :: Set Permission -> CExtDecl -> GlobalContext -> Logger GlobalContext
 insertTopLevelElement implicitPermissions element global = case element of
 
   -- For an external declaration, record the permission actions in the context.
-  CDeclExt (CDecl specifiers fullDeclarators _) -> global
-    { globalPermissionActions = foldr (uncurry (mapInsertWithOrDefault combine))
-      (globalPermissionActions global) identPermissions }
-    where
-      declaratorPermissions = extractDeclaratorPermissionActions fullDeclarators
-      specifierPermissions = extractPermissionActions
-        [attr | CTypeQual (CAttrQual attr) <- specifiers]
+  CDeclExt (CDecl specifiers fullDeclarators _) -> do
+    declaratorPermissions <- extractDeclaratorPermissionActions fullDeclarators
+    specifierPermissions <- extractPermissionActions
+      [attr | CTypeQual (CAttrQual attr) <- specifiers]
+    let
       identPermissions = declaratorPermissions
         ++ [(ident, specifierPermissions) | ident <- map fst declaratorPermissions]
+    return global
+      { globalPermissionActions = foldr (uncurry (mapInsertWithOrDefault combine))
+        (globalPermissionActions global) identPermissions }
 
   -- For a function definition, record the function body in the context.
   -- TODO: parse attributes from parameters
   CFDefExt definition@(CFunDef specifiers
-    (CDeclr (Just ident) _ _ _ _) parameters _body _) -> global
-      { globalPermissionActions = mapInsertWithOrDefault combine
-        ident specifierPermissions $ globalPermissionActions global
-      , globalFunctions = Map.insert ident definition
-        $ globalFunctions global
-      }
-    where
-      specifierPermissions = extractPermissionActions
+    (CDeclr (Just ident) _ _ _ _) parameters _body _) -> do
+      specifierPermissions <- extractPermissionActions
         [attr | CTypeQual (CAttrQual attr) <- specifiers]
+      return global
+        { globalPermissionActions = mapInsertWithOrDefault combine
+          ident specifierPermissions $ globalPermissionActions global
+        , globalFunctions = Map.insert ident definition
+          $ globalFunctions global
+        }
 
-  CFDefExt{} -> global  -- TODO: warn?
-  CAsmExt{} -> global  -- TODO: warn?
+  CFDefExt{} -> return global  -- TODO: warn?
+  CAsmExt{} -> return global  -- TODO: warn?
   where
     combine
       :: Set PermissionAction
@@ -483,26 +487,32 @@ mapInsertWithOrDefault combine key new m
   = Map.insert key (combine new (Map.lookup key m)) m
 
 extractDeclaratorPermissionActions
-  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)] -> [(Ident, Set PermissionAction)]
-extractDeclaratorPermissionActions = foldr go []
+  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)] -> Logger [(Ident, Set PermissionAction)]
+extractDeclaratorPermissionActions = foldrM go []
   where
     -- TODO: Do something with derived declarators?
-    go (Just (CDeclr (Just ident) derived _ attributes _), _, _) acc
-      | Set.null permissionActions = acc
-      | otherwise = (ident, permissionActions) : acc
-      where
-        permissionActions = extractPermissionActions attributes
-    go _ acc = acc
+    go (Just (CDeclr (Just ident) derived _ attributes _), _, _) acc = do
+      permissionActions <- extractPermissionActions attributes
+      return $ if Set.null permissionActions
+        then acc
+        else (ident, permissionActions) : acc
+    go _ acc = return acc
 
-extractPermissionActions :: [CAttr] -> Set PermissionAction
-extractPermissionActions attributes = Set.fromList $ do
-  CAttr (Ident "permission" _ _) expressions _ <- attributes
-  CCall (CVar (Ident actionName _ _) _) permissions _ <- expressions
-  CVar (Ident permission _ _) _ <- permissions
+extractPermissionActions :: [CAttr] -> Logger (Set PermissionAction)
+extractPermissionActions attributes = fmap Set.fromList . runListT $ do
+  CAttr (Ident "permission" _ _) expressions _ <- ListT (return attributes)
+  CCall (CVar (Ident actionName _ _) _) permissions _ <- ListT (return expressions)
+  CVar (Ident permission _ _) pos <- ListT (return permissions)
   action <- case actionName of
     "need" -> return Need
     "grant" -> return Grant
     "revoke" -> return Revoke
     "waive" -> return Waive
-    _ -> throw $ UnknownPermissionActionException actionName
+    _ -> do
+      lift $ record $ Error pos $ Text.pack $ concat
+        [ "unknown permission action '"
+        , actionName
+        , "'; ignoring"
+        ]
+      mzero
   return $ PermissionAction action $ Permission $ Text.pack permission

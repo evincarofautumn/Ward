@@ -3,7 +3,6 @@
 
 module Types where
 
-import Control.Exception (Exception)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.IORef -- *
 import Data.Text (Text)
@@ -103,12 +102,6 @@ data Reason
 reasonPos :: Reason -> NodeInfo
 reasonPos (NoReason pos) = pos
 reasonPos (BecauseCall (Ident _ _ pos)) = pos
-
-data WardException
-  = UnknownPermissionActionException String
-  deriving (Show, Typeable)
-
-instance Exception WardException
 
 instance Show Permission where
   show (Permission name) = Text.unpack name
