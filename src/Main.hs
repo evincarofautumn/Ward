@@ -4,11 +4,8 @@
 
 module Main (main) where
 
-import Control.Arrow (second)
 import Control.Exception (Exception, throw)
-import Control.Applicative ((<|>))
 import Data.Foldable (foldlM, traverse_)
-import Data.List (partition, stripPrefix)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
@@ -22,43 +19,31 @@ import Language.C.Data.Ident (Ident(..))
 import Language.C.Pretty (pretty)
 import Language.C.Syntax.AST -- *
 import Language.C.System.GCC (newGCC)
-import System.Environment (getArgs)
-import System.Exit (exitFailure)
+import System.IO (hPutStrLn, stderr)
 import Text.PrettyPrint (render)
+import qualified Args
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 
 main :: IO ()
 main = do
+  args <- Args.parse
   let temporaryDirectory = Nothing
-  args <- getArgs
-  (preprocessorPath, filePaths, wardFlags, preprocessorFlags) <- case args of
-    [] -> usage
-    [_] -> usage
-    pp : rest -> let
-      (wardArgs, ppFlags) = second (drop 1) $ break (== "--") rest
-      (flags, paths) = partition (\ case '-' : _ -> True; _ -> False) wardArgs
-      in return (pp, paths, traverse parseFlag flags, ppFlags)
-  parsedFlags <- case wardFlags of
-    Left flagError -> do
-      warn $ concat ["Unknown flag '", flagError, "'"]
-      usage
-    Right parsed -> return parsed
-  let preprocessor = newGCC preprocessorPath
-  results <- forM filePaths $ parseCFile preprocessor temporaryDirectory
-    (defaultPreprocessorFlags ++ preprocessorFlags)
-  case sequence results of
+  let preprocessor = newGCC $ Args.preprocessorPath args
+  parseResults <- forM (Args.translationUnitPaths args)
+    $ parseCFile preprocessor temporaryDirectory
+    $ defaultPreprocessorFlags ++ Args.preprocessorFlags args
+  case sequence parseResults of
     Left parseError -> do
-      putStrLn "Parse error:"
-      print parseError
+      hPutStrLn stderr $ "Parse error:\n" ++ show parseError
     Right translationUnits -> do
       let
         -- FIXME: Avoid collisions with static definitions.
         translationUnit = joinTranslationUnits translationUnits
         implicitPermissions = Set.fromList
           [ Permission $ Text.pack permission
-          | GrantFlag permission <- parsedFlags
+          | Args.GrantFlag permission <- Args.flags args
           ]
         global = globalContextFromTranslationUnit
           implicitPermissions translationUnit
@@ -69,14 +54,6 @@ main = do
       print $ Map.size $ globalFunctions global
       checkFunctions global
 
-data Flag = GrantFlag String
-
-parseFlag :: String -> Either String Flag
-parseFlag arg = maybe (Left arg) Right
-  $ try GrantFlag "--grant=" <|> try GrantFlag "-G"
-  where
-    try f prefix = f <$> stripPrefix prefix arg
-
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits translationUnits@(CTranslUnit _ firstLocation : _)
   = CTranslUnit
@@ -86,28 +63,6 @@ joinTranslationUnits translationUnits@(CTranslUnit _ firstLocation : _)
       ])
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
-
-usage :: IO a
-usage = do
-  warn "\
-\SYNOPSIS\n\
-\    ward <cpp> <path>* [--grant=<perm> | -G<perm>] [-- <flags>]\n\
-\\n\
-\OPTIONS\n\
-\    <cpp>\n\
-\        Name of preprocessor (gcc)\n\
-\\n\
-\    <path>\n\
-\        Path to C translation unit (foo.c)\n\
-\\n\
-\    <flags>\n\
-\        Flags for C preprocessor (-D HAVE_FOO -I /bar/baz)\n\
-\\n\
-\    --grant=<perm>\n\
-\    -G<perm>\n\
-\        Implicitly grant <perm> unless explicitly waived.\n\
-\\&"
-  exitFailure
 
 warn :: String -> IO ()
 warn = putStrLn
