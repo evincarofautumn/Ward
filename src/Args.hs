@@ -29,8 +29,8 @@ parse = do
     [_] -> usage
     pp : rest -> let
       (wardArgs, ppFlags') = second (drop 1) $ break (== "--") rest
-      (flags, paths) = partition (\ case '-' : _ -> True; _ -> False) wardArgs
-      in return (pp, paths, traverse parseFlag flags, ppFlags')
+      (unparsedFlags, paths) = partition (\ case '-' : _ -> True; _ -> False) wardArgs
+      in return (pp, paths, traverse parseFlag unparsedFlags, ppFlags')
   parsedFlags <- case wardFlags of
     Left flagError -> do
       hPutStrLn stderr $ concat ["Unknown flag '", flagError, "'"]
@@ -40,8 +40,11 @@ parse = do
     { preprocessorPath = ppPath
     , translationUnitPaths = filePaths
     , flags = parsedFlags
-    , preprocessorFlags = ppFlags
+    , preprocessorFlags = defaultPreprocessorFlags ++ ppFlags
     }
+
+defaultPreprocessorFlags :: [String]
+defaultPreprocessorFlags = ["-D__WARD__"]
 
 data Flag = GrantFlag String
 

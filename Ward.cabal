@@ -15,6 +15,8 @@ cabal-version:       >=1.10
 executable ward
   hs-source-dirs:      src
   main-is:             Main.hs
+  other-modules:       Args
+                     , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , containers

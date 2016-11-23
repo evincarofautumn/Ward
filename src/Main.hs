@@ -1,4 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -10,10 +9,8 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
 import Data.Set (Set)
-import Data.Text (Text)
 import Data.Traversable (forM)
 import Data.Typeable (Typeable)
-import GHC.Exts (IsString)
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Pretty (pretty)
@@ -21,6 +18,7 @@ import Language.C.Syntax.AST -- *
 import Language.C.System.GCC (newGCC)
 import System.IO (hPutStrLn, stderr)
 import Text.PrettyPrint (render)
+import Types
 import qualified Args
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -33,7 +31,7 @@ main = do
   let preprocessor = newGCC $ Args.preprocessorPath args
   parseResults <- forM (Args.translationUnitPaths args)
     $ parseCFile preprocessor temporaryDirectory
-    $ defaultPreprocessorFlags ++ Args.preprocessorFlags args
+    $ Args.preprocessorFlags args
   case sequence parseResults of
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError
@@ -90,7 +88,7 @@ checkFunctions global
       -- granted, and all dropped permissions (declared \ inferred) have been
       -- revoked.
       putStrLn $ replicate 40 '-'
-    checkFunction _ _ = noop
+    checkFunction _ _ = return ()
 
     -- It would be nicer for pipelining if the check* functions took
     -- LocalContext last, but taking it first is convenient for folding.
@@ -415,57 +413,6 @@ unifyBranches prior true false
       ]
     return union
 
-noop :: (Monad m) => m ()
-noop = return ()
-
-newtype Permission = Permission Text
-  deriving (Eq, IsString, Ord)
-
-instance Show Permission where
-  show (Permission name) = Text.unpack name
-
-defaultPreprocessorFlags :: [String]
-defaultPreprocessorFlags = ["-D__WARD__"]
-
--- | Why a particular permission action is being applied.
-data Reason
-  = NoReason
-  | BecauseCall !Ident
-
-instance Show Reason where
-  show = \ case
-    NoReason -> "unspecified reason"
-    BecauseCall (Ident name _ _) -> concat ["call to '", name, "'"]
-
--- | An action to take on the context, given the permission from a
--- 'PermissionAction'.
-data Action
-
-  -- | The context must contain the given permission. This action does not
-  -- change the context.
-  = Need
-
-  -- | After this action, the given permission is added to the context. The
-  -- context may contain the permission already.
-  | Grant
-
-  -- | The context must contain the given permission. After this action, it will
-  -- be removed from the context.
-  | Revoke
-
-  -- | The context may contain the given permission. During this function, it
-  -- will be removed from the context. This can be used to waive permissions
-  -- implicitly granted by "--grant".
-  | Waive
-  deriving (Eq, Ord)
-
-instance Show Action where
-  show action = case action of
-    Need -> "need"
-    Grant -> "grant"
-    Revoke -> "revoke"
-    Waive -> "waive"
-
 data GlobalContext = GlobalContext
   { globalPermissionActions :: !(Map Ident (Set PermissionAction))
   , globalFunctions :: !(Map Ident CFunDef)
@@ -494,14 +441,6 @@ instance Monoid LocalContext where
   mappend a b = LocalContext
     { localPermissionState = localPermissionState a <> localPermissionState b
     }
-
--- | A pair of an action and a permission, such as @grant(foo)@.
-data PermissionAction = PermissionAction !Action !Permission
-  deriving (Eq, Ord)
-
-instance Show PermissionAction where
-  show (PermissionAction action permission)
-    = concat [show action, "(", show permission, ")"]
 
 globalContextFromTranslationUnit
   :: Set Permission -> CTranslUnit -> GlobalContext
