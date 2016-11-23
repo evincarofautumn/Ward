@@ -11,6 +11,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid -- *
 import Data.Set (Set)
 import Language.C.Data.Ident (Ident(..))
+import Language.C.Data.Node (NodeInfo)
 import Language.C.Pretty (pretty)
 import Language.C.Syntax.AST -- *
 import Text.PrettyPrint (render)
@@ -48,19 +49,14 @@ instance Monoid LocalContext where
     { localPermissionState = localPermissionState a <> localPermissionState b
     }
 
-translationUnits :: [CTranslUnit] -> Set Permission -> IO ()
+translationUnits :: [CTranslUnit] -> Set Permission -> Logger ()
 translationUnits tus implicitPermissions = let
   -- FIXME: Avoid collisions with static definitions.
   translationUnit = joinTranslationUnits tus
   global = globalContextFromTranslationUnit
     implicitPermissions translationUnit
   symbolTable = globalPermissionActions global
-  in do
-    mapM_ (\ (Ident name _ _, permissions)
-      -> putStrLn $ show name ++ ": " ++ show (Set.toList permissions))
-      $ Map.toList symbolTable
-    print $ Map.size $ globalFunctions global
-    checkFunctions global
+  in checkFunctions global
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
@@ -72,35 +68,38 @@ joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
-checkFunctions :: GlobalContext -> IO ()
+checkFunctions :: GlobalContext -> Logger ()
 checkFunctions global
   = traverse_ (checkFunction mempty) $ globalFunctions global
   where
-    checkFunction :: LocalContext -> CFunDef -> IO ()
+    checkFunction :: LocalContext -> CFunDef -> Logger ()
     checkFunction local (CFunDef specifiers
-      declarator@(CDeclr (Just ident) _ _ _ _) parameters body _) = do
-      putStrLn $ render $ pretty declarator
+      declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _) parameters body _) = do
       let
         permissionActions = fromMaybe mempty
           (Map.lookup ident $ globalPermissionActions global)
           <> extractPermissionActions
             [attr | CTypeQual (CAttrQual attr) <- specifiers]
-      putStrLn $ "Granting: " ++ show permissionActions
+      record $ Note pos $ Text.pack $ concat
+        [ "checking '"
+        , name
+        , "'"
+        ]
       -- Grant/waive permissions locally.
-      local' <- foldlM applyPreAction local permissionActions
+      local' <- foldlM (applyPreAction pos) local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
-      local''' <- foldlM (applyPermissionAction NoReason) local'' permissionActions
+      local''' <- foldlM (applyPermissionAction (NoReason pos)) local'' permissionActions
       -- TODO: check that all added permissions (inferred \ declared) have been
       -- granted, and all dropped permissions (declared \ inferred) have been
       -- revoked.
-      putStrLn $ replicate 40 '-'
+      return ()
     checkFunction _ _ = return ()
 
     -- It would be nicer for pipelining if the check* functions took
     -- LocalContext last, but taking it first is convenient for folding.
 
-    checkStatement :: LocalContext -> CStat -> IO LocalContext
+    checkStatement :: LocalContext -> CStat -> Logger LocalContext
     checkStatement local = \ case
 
       -- label: stmt
@@ -138,11 +137,11 @@ checkFunctions global
 
       -- if (expr) stmt (else stmt}?
       -- Check true and false branches and take their union.
-      CIf condition true mFalse _ -> do
+      CIf condition true mFalse pos -> do
         local' <- checkExpression local condition
         localTrue <- checkStatement local' true
         localFalse <- foldlM checkStatement local' mFalse
-        unifyBranches local' localTrue localFalse
+        unifyBranches pos local' localTrue localFalse
 
       -- switch (expr) body
       -- Traverse all branches in body and take their union.
@@ -199,7 +198,7 @@ checkFunctions global
       -- No idea what to do with assembly statements.
       CAsm{} -> return local
 
-    checkBlockItem :: LocalContext -> CBlockItem -> IO LocalContext
+    checkBlockItem :: LocalContext -> CBlockItem -> Logger LocalContext
     checkBlockItem local = \ case
       CBlockStmt statement -> checkStatement local statement
       CBlockDecl (CDecl _specifiers declarations _)
@@ -212,7 +211,7 @@ checkFunctions global
     -- function arguments, which is standard-compliant but not necessarily the
     -- same as what your compiler does.
 
-    checkExpression :: LocalContext -> CExpr -> IO LocalContext
+    checkExpression :: LocalContext -> CExpr -> Logger LocalContext
     checkExpression local = \ case
 
       -- a, b, ...
@@ -225,11 +224,11 @@ checkFunctions global
         checkExpression local' b
 
       -- a ? b : c
-      CCond a mb c _ -> do
+      CCond a mb c pos -> do
         local' <- checkExpression local a
         localTrue <- foldlM checkExpression local' mb
         localFalse <- checkExpression local' c
-        unifyBranches local' localTrue localFalse
+        unifyBranches pos local' localTrue localFalse
 
       -- a op b
       CBinary _operator a b _ -> do
@@ -270,7 +269,7 @@ checkFunctions global
         checkExpression local' b
 
       -- f(a, b, ...)
-      CCall function arguments _ -> do
+      CCall function arguments callPos -> do
         local' <- checkExpression local function
         local'' <- foldlM checkExpression local' arguments
         case function of
@@ -294,9 +293,10 @@ checkFunctions global
 -}
                 return local''
           _ -> do
-            putStrLn $ concat
-              [ "ward warning: indirect call not handled in: "
+            record $ Warning callPos $ Text.pack $ concat
+              [ "indirect call '"
               , render $ pretty function
+              , "' not handled"
               ]
             return local''
 
@@ -326,18 +326,18 @@ checkFunctions global
       -- GNU builtins: va_arg, offsetof, __builtin_types_compatible_p
       CBuiltinExpr{} -> return local
 
-    checkInitializerList :: LocalContext -> CInitList -> IO LocalContext
+    checkInitializerList :: LocalContext -> CInitList -> Logger LocalContext
     checkInitializerList = foldlM $ \ local (_partDesignators, initializer)
       -> checkInitializer local initializer
 
-    checkInitializer :: LocalContext -> CInit -> IO LocalContext
+    checkInitializer :: LocalContext -> CInit -> Logger LocalContext
     checkInitializer local = \ case
       CInitExpr expression _ -> checkExpression local expression
       CInitList initializers _ -> checkInitializerList local initializers
 
-    applyPreAction :: LocalContext -> PermissionAction -> IO LocalContext
-    applyPreAction local (PermissionAction action permission) = case action of
-      Need -> applyPermissionAction NoReason local
+    applyPreAction :: NodeInfo -> LocalContext -> PermissionAction -> Logger LocalContext
+    applyPreAction pos local (PermissionAction action permission) = case action of
+      Need -> applyPermissionAction (NoReason pos) local
         $ PermissionAction Grant permission
       Grant -> return local
       Revoke -> return local  -- FIXME: Not sure if this is correct.
@@ -347,7 +347,7 @@ checkFunctions global
           $ PermissionAction Revoke permission
       -}
 
-    applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> IO LocalContext
+    applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> Logger LocalContext
     applyPermissionAction reason local (PermissionAction action permission)
       = case action of
 
@@ -355,8 +355,8 @@ checkFunctions global
           | permission `Set.member` localPermissionState local
           -> return local
           | otherwise -> do
-            putStrLn $ concat
-              [ "ward error: because of "
+            record $ Error (reasonPos reason) $ Text.pack $ concat
+              [ "because of "
               , show reason
               , ", need permission '"
               , show permission
@@ -385,8 +385,8 @@ checkFunctions global
           -> return local { localPermissionState = Set.delete permission
             $ localPermissionState local }
           | otherwise -> do
-            putStrLn $ concat
-              [ "ward error: revoking permission '"
+            record $ Error (reasonPos reason) $ Text.pack $ concat
+              [ "revoking permission '"
               , show permission
               , "' not present in context "
               , show $ Set.toList $ localPermissionState local
@@ -399,15 +399,16 @@ checkFunctions global
 -- | Verifies that two local contexts match, using a prior context to produce
 -- detailed warnings in the event of a mismatch.
 unifyBranches
-  :: LocalContext  -- ^ Prior context.
+  :: NodeInfo      -- ^ Source position.
+  -> LocalContext  -- ^ Prior context.
   -> LocalContext  -- ^ Context from first branch.
   -> LocalContext  -- ^ Context from second branch.
-  -> IO LocalContext
-unifyBranches prior true false
+  -> Logger LocalContext
+unifyBranches pos prior true false
   | localPermissionState true == localPermissionState false = return true
   | otherwise = do
     let union = true <> false
-    putStrLn $ concat
+    record $ Warning pos $ Text.pack $ concat
       [ "ward warning: "
       , show $ localPermissionState prior
       , " -> "

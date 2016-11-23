@@ -4,11 +4,67 @@
 module Types where
 
 import Control.Exception (Exception)
+import Control.Monad.IO.Class (MonadIO(..))
+import Data.IORef -- *
 import Data.Text (Text)
 import Data.Typeable (Typeable)
 import GHC.Exts (IsString(..))
 import Language.C.Data.Ident (Ident(..))
+import Language.C.Data.Node (NodeInfo(..))
+import Language.C.Data.Position (posFile, posRow)
 import qualified Data.Text as Text
+
+data Entry
+  = Note !NodeInfo !Text
+  | Warning !NodeInfo !Text
+  | Error !NodeInfo !Text
+
+instance Show Entry where
+  show = \ case
+    Note p t -> concat [posPrefix p, ": note: ", Text.unpack t]
+    Warning p t -> concat [posPrefix p, ": warning: ", Text.unpack t]
+    Error p t -> concat [posPrefix p, ": error: ", Text.unpack t]
+
+posPrefix :: NodeInfo -> String
+posPrefix (OnlyPos pos _) = concat
+  [ posFile pos
+  , ":"
+  , show $ posRow pos
+  ]
+posPrefix (NodeInfo pos _ _) = concat
+  [ posFile pos
+  , ":"
+  , show $ posRow pos
+  ]
+
+newtype Logger a = Logger { runLogger :: IORef [Entry] -> IO a }
+
+instance Functor Logger where
+  fmap f (Logger g) = Logger (\ entries -> fmap f (g entries))
+
+instance Applicative Logger where
+  pure = Logger . const . return
+  Logger f <*> Logger g = Logger (\ entries -> f entries <*> g entries)
+
+instance Monad Logger where
+  Logger f >>= g = Logger (\ entries -> flip runLogger entries . g =<< f entries)
+
+instance MonadIO Logger where
+  liftIO = Logger . const
+
+record :: Entry -> Logger ()
+record entry = Logger (\ entries -> modifyIORef' entries (entry :))
+
+partitionEntries
+  :: [Entry]
+  -> ([(NodeInfo, Text)], [(NodeInfo, Text)], [(NodeInfo, Text)])
+partitionEntries = go mempty
+  where
+    go (ns, ws, es) = \ case
+      Note a b : rest -> go ((a, b) : ns, ws, es) rest
+      Warning a b : rest -> go (ns, (a, b) : ws, es) rest
+      Error a b : rest -> go (ns, ws, (a, b) : es) rest
+      [] -> (reverse ns, reverse ws, reverse es)
 
 -- | An action to take on the context, given the permission from a
 -- 'PermissionAction'.
@@ -41,8 +97,12 @@ data PermissionAction = PermissionAction !Action !Permission
 
 -- | Why a particular permission action is being applied.
 data Reason
-  = NoReason
+  = NoReason !NodeInfo
   | BecauseCall !Ident
+
+reasonPos :: Reason -> NodeInfo
+reasonPos (NoReason pos) = pos
+reasonPos (BecauseCall (Ident _ _ pos)) = pos
 
 data WardException
   = UnknownPermissionActionException String
@@ -59,7 +119,7 @@ instance Show PermissionAction where
 
 instance Show Reason where
   show = \ case
-    NoReason -> "unspecified reason"
+    NoReason _ -> "unspecified reason"
     BecauseCall (Ident name _ _) -> concat ["call to '", name, "'"]
 
 instance Show Action where
