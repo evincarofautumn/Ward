@@ -3,7 +3,9 @@
 
 module Types where
 
+import Control.Exception (Exception)
 import Data.Text (Text)
+import Data.Typeable (Typeable)
 import GHC.Exts (IsString(..))
 import Language.C.Data.Ident (Ident(..))
 import qualified Data.Text as Text
@@ -41,6 +43,12 @@ data PermissionAction = PermissionAction !Action !Permission
 data Reason
   = NoReason
   | BecauseCall !Ident
+
+data WardException
+  = UnknownPermissionActionException String
+  deriving (Show, Typeable)
+
+instance Exception WardException
 
 instance Show Permission where
   show (Permission name) = Text.unpack name
