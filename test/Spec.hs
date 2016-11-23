@@ -6,10 +6,12 @@ module Main
 
 import Args (Args(Args))
 import Data.IORef -- *
+import Data.Text (Text)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
+import Language.C.Data.Node (NodeInfo)
 import Language.C.System.GCC (newGCC)
-import Test.HUnit
+import Test.HUnit hiding (errors)
 import Test.Hspec
 import Types
 import qualified Args
@@ -27,20 +29,33 @@ spec = do
     it "reports invalid permission actions" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/invalid-permission-action.c"] }
-        $ \ entries -> do
-        assertBool "reports one error" $ case entries of
-          [Error _ "unknown permission action 'require'; ignoring"] -> True
-          _ -> False
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool (unlines $ "expected action error but got:" : map show errors)
+          $ case errors of
+            [(_, "unknown permission action 'require'; ignoring")] -> True
+            _ -> False
 
     it "reports multiple invalid permission actions" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/invalid-permission-actions.c"] }
-        $ \ entries -> do
-        assertBool "reports two errors" $ case entries of
-          [ Error _ "unknown permission action 'require'; ignoring"
-            , Error _ "unknown permission action 'wave'; ignoring"
-            ] -> True
-          _ -> False
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected action error but got:" : map show errors)
+          $ case errors of
+            [ (_, "unknown permission action 'require'; ignoring")
+              , (_, "unknown permission action 'wave'; ignoring")
+              ] -> True
+            _ -> False
+
+    it "reports missing permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/missing-permission.c"] }
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "because of call to 'foo', need permission 'baz' not present in context []")] -> True
+            _ -> False
 
 defArgs :: Args
 defArgs = Args
@@ -50,7 +65,10 @@ defArgs = Args
   , Args.preprocessorFlags = []
   }
 
-wardTest :: Args -> ([Entry] -> IO ()) -> IO ()
+wardTest
+  :: Args
+  -> (([(NodeInfo, Text)], [(NodeInfo, Text)], [(NodeInfo, Text)]) -> IO ())
+  -> IO ()
 wardTest args check = do
   let temporaryDirectory = Nothing
   let preprocessor = newGCC $ Args.preprocessorPath args
@@ -69,4 +87,4 @@ wardTest args check = do
       flip runLogger entriesRef
         $ Check.translationUnits translationUnits implicitPermissions
       entries <- readIORef entriesRef
-      check entries
+      check (partitionEntries entries)
