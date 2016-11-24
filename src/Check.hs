@@ -9,13 +9,14 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.List -- *
 import Data.Foldable (foldlM, foldrM, traverse_)
 import Data.Map (Map)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Monoid -- *
 import Data.Set (Set)
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo)
 import Language.C.Pretty (pretty)
 import Language.C.Syntax.AST -- *
+import Language.C.Syntax.Constants -- *
 import Text.PrettyPrint (render)
 import Types
 import qualified Data.Map as Map
@@ -29,7 +30,7 @@ data GlobalContext = GlobalContext
 
 data LocalContext = LocalContext
   { localPermissionState :: !(Set Permission)
-  -- , localVariables :: !(Map Ident [PermissionAction])
+  , localVarPermissions :: !(Map String (Set Permission))
   } deriving (Eq)
 
 instance Monoid GlobalContext where
@@ -46,9 +47,13 @@ instance Monoid GlobalContext where
 instance Monoid LocalContext where
   mempty = LocalContext
     { localPermissionState = mempty
+    , localVarPermissions = mempty
     }
   mappend a b = LocalContext
     { localPermissionState = localPermissionState a <> localPermissionState b
+    -- TODO: Verify that merging with simple set union is correct.
+    , localVarPermissions = Map.unionWith (<>)
+      (localVarPermissions a) (localVarPermissions b)
     }
 
 translationUnits :: [CTranslUnit] -> Set Permission -> Logger ()
@@ -77,6 +82,13 @@ checkFunctions global
     checkFunction :: LocalContext -> CFunDef -> Logger ()
     checkFunction local (CFunDef specifiers
       declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _) parameters body _) = do
+      let
+        parameterNames =
+          [ Just parameterName
+          | CDecl _ parameterDeclarations _ <- parameters
+          , (Just (CDeclr (Just (Ident parameterName _ _)) _ _ _ _), _, _)
+            <- parameterDeclarations
+          ]
       extractedActions <- extractPermissionActions
         [attr | CTypeQual (CAttrQual attr) <- specifiers]
       let
@@ -89,10 +101,11 @@ checkFunctions global
         , "'"
         ]
       -- Grant/waive permissions locally.
-      local' <- foldlM (applyPreAction pos) local permissionActions
+      local' <- foldlM (applyPreAction pos parameterNames) local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
-      local''' <- foldlM (applyPermissionAction (NoReason pos)) local'' permissionActions
+      local''' <- foldlM (applyPermissionAction (NoReason pos) parameterNames)
+        local'' permissionActions
       -- TODO: check that all added permissions (inferred \ declared) have been
       -- granted, and all dropped permissions (declared \ inferred) have been
       -- revoked.
@@ -273,6 +286,13 @@ checkFunctions global
 
       -- f(a, b, ...)
       CCall function arguments callPos -> do
+        let
+          argumentNames =
+            [ case argument of
+              CVar (Ident argumentName _ _) _ -> Just argumentName
+              _ -> Nothing
+            | argument <- arguments
+            ]
         local' <- checkExpression local function
         local'' <- foldlM checkExpression local' arguments
         case function of
@@ -285,7 +305,8 @@ checkFunctions global
                   , show $ Set.toList permissionActions
                   ]
 -}
-                foldlM (applyPermissionAction (BecauseCall ident)) local'' permissionActions
+                foldlM (applyPermissionAction (BecauseCall ident) argumentNames)
+                  local'' permissionActions
               Nothing -> do
 {-
                 warn $ concat
@@ -338,25 +359,77 @@ checkFunctions global
       CInitExpr expression _ -> checkExpression local expression
       CInitList initializers _ -> checkInitializerList local initializers
 
-    applyPreAction :: NodeInfo -> LocalContext -> PermissionAction -> Logger LocalContext
-    applyPreAction pos local (PermissionAction action permission) = case action of
-      Need -> applyPermissionAction (NoReason pos) local
-        $ PermissionAction Grant permission
-      Grant -> return local
-      Revoke -> return local  -- FIXME: Not sure if this is correct.
-      Waive -> return local
-      {-
-        applyPermissionAction NoReason local
-          $ PermissionAction Revoke permission
-      -}
+    applyPreAction
+      :: NodeInfo
+      -> [Maybe String]
+      -> LocalContext
+      -> PermissionAction
+      -> Logger LocalContext
+    applyPreAction pos argumentNames local
+      (PermissionAction action mSubject permission) = case action of
+        Need -> applyPermissionAction (NoReason pos) argumentNames local
+          $ PermissionAction Grant mSubject permission
+        Grant -> return local
+        Revoke -> return local  -- FIXME: Not sure if this is correct.
+        Waive -> return local
+        {-
+          applyPermissionAction NoReason local
+            $ PermissionAction Revoke permission
+        -}
 
-    applyPermissionAction :: Reason -> LocalContext -> PermissionAction -> Logger LocalContext
-    applyPermissionAction reason local (PermissionAction action permission)
+    applyPermissionAction
+      :: Reason
+      -> [Maybe String]
+      -> LocalContext
+      -> PermissionAction
+      -> Logger LocalContext
+    applyPermissionAction reason argumentNames local
+      (PermissionAction action mSubject permission)
       = case action of
 
         Need
+          | Just subject <- mSubject
+          -- FIXME: Avoid fromJust.
+          -> case Map.lookup (fromJust (argumentNames !! subject)) (localVarPermissions local) of
+            Just varPermissions
+
+              -- The variable has the permission: do nothing.
+              | permission `Set.member` varPermissions -> return local
+
+              -- The variable has permissions, but not the required ones: report it.
+              | otherwise -> do
+                record $ Error (reasonPos reason) $ Text.pack $ concat
+                  [ "because of "
+                  , show reason
+                  , ", need permission '"
+                  , show permission
+                  , "' for variable '"
+                  -- FIXME: Avoid fromJust.
+                  , fromJust $ argumentNames !! subject
+                  , "' not present in context "
+                  , show $ Set.toList varPermissions
+                  ]
+                return local
+
+            -- The variable does not have permissions: report it.
+            Nothing -> do
+              record $ Error (reasonPos reason) $ Text.pack $ concat
+                [ "because of "
+                , show reason
+                , ", need permission '"
+                , show permission
+                , "' for variable '"
+                -- FIXME: Avoid fromJust.
+                , fromJust $ argumentNames !! subject
+                , "' not present in context []"
+                ]
+              return local
+
+          -- There is no subject, and the permission is in the local context: do nothing.
           | permission `Set.member` localPermissionState local
           -> return local
+
+          -- There is no subject, and the permission is not present: report it.
           | otherwise -> do
             record $ Error (reasonPos reason) $ Text.pack $ concat
               [ "because of "
@@ -369,6 +442,34 @@ checkFunctions global
             return local
 
         Grant
+          -- When granting a permission to a particular subject, the name of the
+          -- subject is first looked up by its index in the arguments/parameters:
+          --
+          --     int lock_file (int fd)
+          --       __attribute__ ((permission (grant (flocked (0)))));
+          --
+          -- Arguments at call sites:
+          --
+          --     lock_file (my_fd);
+          --     // grant (flocked (0)) -> my_fd : [flocked]
+          --
+          -- Parameters in definitions:
+          --
+          --     int lock_file (int fd)
+          --     {
+          --       // grant (flocked (0)) -> fd : [flocked]
+          --     }
+          --
+          | Just subject <- mSubject
+          -> return local
+            -- FIXME: (!!) can throw out-of-bounds.
+            -- FIXME: Avoid fromJust.
+            -- TODO: Verify that merging with simple set union is correct.
+            { localVarPermissions = Map.insertWith (<>)
+              (fromJust (argumentNames !! subject)) (Set.singleton permission)
+              $ localVarPermissions local }
+
+          -- If there is no subject, we grant the permission to all local calls.
           | permission `Set.member` localPermissionState local -> do
 {-
             putStrLn $ concat
@@ -384,9 +485,25 @@ checkFunctions global
               $ localPermissionState local }
 
         Revoke
+          | Just subject <- mSubject
+          -> let
+            argumentName = fromJust (argumentNames !! subject)
+            in return local
+              -- FIXME: (!!) can throw out-of-bounds.
+              -- FIXME: Avoid fromJust.
+              -- FIXME: Report errors.
+              { localVarPermissions =
+                case Map.lookup argumentName $ localVarPermissions local of
+                  Just existing -> Map.insert argumentName
+                    (Set.delete permission existing)
+                    $ localVarPermissions local
+                  Nothing -> localVarPermissions local
+              }
+
           | permission `Set.member` localPermissionState local
           -> return local { localPermissionState = Set.delete permission
             $ localPermissionState local }
+
           | otherwise -> do
             record $ Error (reasonPos reason) $ Text.pack $ concat
               [ "revoking permission '"
@@ -397,6 +514,8 @@ checkFunctions global
             return local
 
         -- Local waiving of permissions has no effect on the outer context.
+        -- Implicitly granted permissions can't have a subject, so we don't need
+        -- to check for one here.
         Waive -> return local
 
 -- | Verifies that two local contexts match, using a prior context to produce
@@ -468,17 +587,17 @@ insertTopLevelElement implicitPermissions element global = case element of
       -> Maybe (Set PermissionAction)
       -> Set PermissionAction
     combine new mOld = newGranted <> case mOld of
-      Nothing -> Set.map (PermissionAction Need) implicitPermissions Set.\\ newWaived
+      Nothing -> Set.map (PermissionAction Need Nothing) implicitPermissions Set.\\ newWaived
       Just old -> old Set.\\ newWaived
       where
         newGranted = Set.fromList
           [ permissionAction
-          | permissionAction@(PermissionAction action _) <- Set.toList new
+          | permissionAction@(PermissionAction action _ _) <- Set.toList new
           , action /= Waive
           ]
         newWaived = Set.fromList
-          [ PermissionAction Need permission
-          | PermissionAction Waive permission <- Set.toList new
+          [ PermissionAction Need mSubject permission
+          | PermissionAction Waive mSubject permission <- Set.toList new
           ]
 
 mapInsertWithOrDefault
@@ -500,9 +619,23 @@ extractDeclaratorPermissionActions = foldrM go []
 
 extractPermissionActions :: [CAttr] -> Logger (Set PermissionAction)
 extractPermissionActions attributes = fmap Set.fromList . runListT $ do
-  CAttr (Ident "permission" _ _) expressions _ <- ListT (return attributes)
-  CCall (CVar (Ident actionName _ _) _) permissions _ <- ListT (return expressions)
-  CVar (Ident permission _ _) pos <- ListT (return permissions)
+  CAttr (Ident "permission" _ _) expressions _ <- select attributes
+  CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
+  permissionSpec <- select permissions
+  (permission, mSubject) <- case permissionSpec of
+    CVar (Ident permission _ _) _ -> return (permission, Nothing)
+    CCall
+      (CVar (Ident permission _ _) _)
+      [CConst (CIntConst (CInteger subject _ _) _)]
+      _
+      -> return (permission, Just (fromInteger subject))
+    other -> do
+      lift $ record $ Error pos $ Text.pack $ concat
+        [ "malformed permission specifier '"
+        , render $ pretty other
+        , "'; ignoring"
+        ]
+      mzero
   action <- case actionName of
     "need" -> return Need
     "grant" -> return Grant
@@ -515,4 +648,8 @@ extractPermissionActions attributes = fmap Set.fromList . runListT $ do
         , "'; ignoring"
         ]
       mzero
-  return $ PermissionAction action $ Permission $ Text.pack permission
+  return $ PermissionAction action mSubject
+    $ Permission $ Text.pack permission
+
+select :: (Monad m) => [a] -> ListT m a
+select = ListT . return

@@ -57,6 +57,23 @@ spec = do
             [(_, "because of call to 'foo', need permission 'baz' not present in context []")] -> True
             _ -> False
 
+  describe "with local permissions" $ do
+
+    it "reports missing permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/permission-with-subject.c"] }
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [ (_, "because of call to 'requires_lock',\
+                  \ need permission 'locked' for variable 'p'\
+                  \ not present in context []")
+              , (_, "because of call to 'requires_lock',\
+                    \ need permission 'locked' for variable 'q'\
+                    \ not present in context []")]
+              -> True
+            _ -> False
+
 defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"

@@ -6,7 +6,6 @@ module Types where
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.IORef -- *
 import Data.Text (Text)
-import Data.Typeable (Typeable)
 import GHC.Exts (IsString(..))
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
@@ -91,7 +90,7 @@ newtype Permission = Permission Text
   deriving (Eq, IsString, Ord)
 
 -- | A pair of an action and a permission, such as @grant(foo)@.
-data PermissionAction = PermissionAction !Action !Permission
+data PermissionAction = PermissionAction !Action !(Maybe Int) !Permission
   deriving (Eq, Ord)
 
 -- | Why a particular permission action is being applied.
@@ -107,7 +106,9 @@ instance Show Permission where
   show (Permission name) = Text.unpack name
 
 instance Show PermissionAction where
-  show (PermissionAction action permission)
+  show (PermissionAction action (Just subject) permission)
+    = concat [show action, "(", show permission, "(", show subject, "))"]
+  show (PermissionAction action Nothing permission)
     = concat [show action, "(", show permission, ")"]
 
 instance Show Reason where
