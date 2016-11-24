@@ -38,7 +38,7 @@ posPrefix (NodeInfo pos _ _) = concat
 newtype Logger a = Logger { runLogger :: IORef [Entry] -> IO a }
 
 instance Functor Logger where
-  fmap f (Logger g) = Logger (\ entries -> fmap f (g entries))
+  fmap f (Logger g) = Logger $ fmap f . g
 
 instance Applicative Logger where
   pure = Logger . const . return
