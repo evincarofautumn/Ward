@@ -45,7 +45,8 @@ instance Applicative Logger where
   Logger f <*> Logger g = Logger (\ entries -> f entries <*> g entries)
 
 instance Monad Logger where
-  Logger f >>= g = Logger (\ entries -> flip runLogger entries . g =<< f entries)
+  Logger f >>= g = Logger
+    $ \ entries -> flip runLogger entries . g =<< f entries
 
 instance MonadIO Logger where
   liftIO = Logger . const

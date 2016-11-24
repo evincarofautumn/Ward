@@ -29,7 +29,9 @@ parse = do
     [_] -> usage
     pp : rest -> let
       (wardArgs, ppFlags') = second (drop 1) $ break (== "--") rest
-      (unparsedFlags, paths) = partition (\ case '-' : _ -> True; _ -> False) wardArgs
+      isFlag ('-' : _) = True
+      isFlag _ = False
+      (unparsedFlags, paths) = partition isFlag wardArgs
       in return (pp, paths, traverse parseFlag unparsedFlags, ppFlags')
   parsedFlags <- case wardFlags of
     Left flagError -> do

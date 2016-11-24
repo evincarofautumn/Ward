@@ -81,7 +81,8 @@ checkFunctions global
   where
     checkFunction :: LocalContext -> CFunDef -> Logger ()
     checkFunction local (CFunDef specifiers
-      declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _) parameters body _) = do
+      declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
+      parameters body _) = do
       let
         parameterNames =
           [ Just parameterName
@@ -101,7 +102,8 @@ checkFunctions global
         , "'"
         ]
       -- Grant/waive permissions locally.
-      local' <- foldlM (applyPreAction pos parameterNames) local permissionActions
+      local' <- foldlM (applyPreAction pos parameterNames)
+        local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
       local''' <- foldlM (applyPermissionAction (NoReason pos) parameterNames)
@@ -390,14 +392,32 @@ checkFunctions global
         Need
           | Just subject <- mSubject
           -- FIXME: Avoid fromJust.
-          -> case Map.lookup (fromJust (argumentNames !! subject)) (localVarPermissions local) of
-            Just varPermissions
+          -> let
+            argumentName = fromJust (argumentNames !! subject)
+            in case Map.lookup argumentName $ localVarPermissions local of
+              Just varPermissions
 
-              -- The variable has the permission: do nothing.
-              | permission `Set.member` varPermissions -> return local
+                -- The variable has the permission: do nothing.
+                | permission `Set.member` varPermissions -> return local
 
-              -- The variable has permissions, but not the required ones: report it.
-              | otherwise -> do
+                -- The variable has permissions, but not the required ones:
+                -- report it.
+                | otherwise -> do
+                  record $ Error (reasonPos reason) $ Text.pack $ concat
+                    [ "because of "
+                    , show reason
+                    , ", need permission '"
+                    , show permission
+                    , "' for variable '"
+                    -- FIXME: Avoid fromJust.
+                    , fromJust $ argumentNames !! subject
+                    , "' not present in context "
+                    , show $ Set.toList varPermissions
+                    ]
+                  return local
+
+              -- The variable does not have permissions: report it.
+              Nothing -> do
                 record $ Error (reasonPos reason) $ Text.pack $ concat
                   [ "because of "
                   , show reason
@@ -406,30 +426,15 @@ checkFunctions global
                   , "' for variable '"
                   -- FIXME: Avoid fromJust.
                   , fromJust $ argumentNames !! subject
-                  , "' not present in context "
-                  , show $ Set.toList varPermissions
+                  , "' not present in context []"
                   ]
                 return local
 
-            -- The variable does not have permissions: report it.
-            Nothing -> do
-              record $ Error (reasonPos reason) $ Text.pack $ concat
-                [ "because of "
-                , show reason
-                , ", need permission '"
-                , show permission
-                , "' for variable '"
-                -- FIXME: Avoid fromJust.
-                , fromJust $ argumentNames !! subject
-                , "' not present in context []"
-                ]
-              return local
-
-          -- There is no subject, and the permission is in the local context: do nothing.
+          -- No subject, and permission in the local context: do nothing.
           | permission `Set.member` localPermissionState local
           -> return local
 
-          -- There is no subject, and the permission is not present: report it.
+          -- No subject, and permission not present: report it.
           | otherwise -> do
             record $ Error (reasonPos reason) $ Text.pack $ concat
               [ "because of "
@@ -443,17 +448,18 @@ checkFunctions global
 
         Grant
           -- When granting a permission to a particular subject, the name of the
-          -- subject is first looked up by its index in the arguments/parameters:
+          -- subject is first looked up by its index in the arguments of a call
+          -- or parameters of a definition:
           --
           --     int lock_file (int fd)
           --       __attribute__ ((permission (grant (flocked (0)))));
           --
-          -- Arguments at call sites:
+          -- At call sites:
           --
           --     lock_file (my_fd);
           --     // grant (flocked (0)) -> my_fd : [flocked]
           --
-          -- Parameters in definitions:
+          -- In definitions:
           --
           --     int lock_file (int fd)
           --     {
@@ -560,10 +566,13 @@ insertTopLevelElement implicitPermissions element global = case element of
     specifierPermissions <- extractPermissionActions
       [attr | CTypeQual (CAttrQual attr) <- specifiers]
     let
-      identPermissions = declaratorPermissions
-        ++ [(ident, specifierPermissions) | ident <- map fst declaratorPermissions]
+      identPermissions = declaratorPermissions ++
+        [ (ident, specifierPermissions)
+        | ident <- map fst declaratorPermissions
+        ]
     return global
-      { globalPermissionActions = foldr (uncurry (mapInsertWithOrDefault combine))
+      { globalPermissionActions = foldr
+        (uncurry (mapInsertWithOrDefault combine))
         (globalPermissionActions global) identPermissions }
 
   -- For a function definition, record the function body in the context.
@@ -587,7 +596,8 @@ insertTopLevelElement implicitPermissions element global = case element of
       -> Maybe (Set PermissionAction)
       -> Set PermissionAction
     combine new mOld = newGranted <> case mOld of
-      Nothing -> Set.map (PermissionAction Need Nothing) implicitPermissions Set.\\ newWaived
+      Nothing -> Set.map (PermissionAction Need Nothing) implicitPermissions
+        Set.\\ newWaived
       Just old -> old Set.\\ newWaived
       where
         newGranted = Set.fromList
@@ -606,7 +616,8 @@ mapInsertWithOrDefault combine key new m
   = Map.insert key (combine new (Map.lookup key m)) m
 
 extractDeclaratorPermissionActions
-  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)] -> Logger [(Ident, Set PermissionAction)]
+  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)]
+  -> Logger [(Ident, Set PermissionAction)]
 extractDeclaratorPermissionActions = foldrM go []
   where
     -- TODO: Do something with derived declarators?
