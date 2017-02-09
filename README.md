@@ -23,7 +23,7 @@ SYNOPSIS
 
 `stack install` will place a copy of the executable in `~/.local/bin`.
 
-Ward accepts a path to a C preprocessor (e.g., `gcc`), a list of paths to C sources, options for granting implicit permissions, and additional flags to pass to the preprocessor. On OS X, you’ll want to pass `-U__BLOCKS__` because the C parsing library used by Ward does not support Apple’s block extension. A typical invocation looks like this:
+Ward accepts a path to a C preprocessor (e.g., `gcc`), a list of paths to C sources, options for granting implicit permissions, and additional flags to pass to the preprocessor. On OS X, you’ll want to pass `-fno-blocks` or `-U__BLOCKS__` because the C parsing library used by Ward does not support Apple’s block extension. A typical invocation looks like this:
 
 ```
 ward gcc foo.c bar.c --grant=malloc -- -I/some/include/path -U__BLOCKS__
