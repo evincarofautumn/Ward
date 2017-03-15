@@ -7,7 +7,7 @@ module Args
   , usage
   ) where
 
-import Control.Applicative ((<|>))
+import Control.Applicative (Alternative(..))
 import Control.Arrow (second)
 import Data.List (partition, stripPrefix)
 import System.Environment (getArgs)
@@ -17,8 +17,9 @@ import System.IO (hPutStrLn, stderr)
 data Args = Args
   { preprocessorPath :: FilePath
   , translationUnitPaths :: [FilePath]
-  , flags :: [Flag]
+  , implicitPermissions :: [String]
   , preprocessorFlags :: [String]
+  , configFilePaths :: [FilePath]
   }
 
 parse :: IO Args
@@ -41,18 +42,23 @@ parse = do
   return Args
     { preprocessorPath = ppPath
     , translationUnitPaths = filePaths
-    , flags = parsedFlags
+    , implicitPermissions = [permission | GrantFlag permission <- parsedFlags]
     , preprocessorFlags = defaultPreprocessorFlags ++ ppFlags
+    , configFilePaths = [path | ConfigFlag path <- parsedFlags]
     }
 
 defaultPreprocessorFlags :: [String]
 defaultPreprocessorFlags = ["-D__WARD__"]
 
-data Flag = GrantFlag String
+data Flag = GrantFlag String | ConfigFlag FilePath
 
 parseFlag :: String -> Either String Flag
-parseFlag arg = maybe (Left arg) Right
-  $ try GrantFlag "--grant=" <|> try GrantFlag "-G"
+parseFlag arg = maybe (Left arg) Right $ foldr (<|>) empty
+  [ try GrantFlag "--grant="
+  , try GrantFlag "-G"
+  , try ConfigFlag "--config="
+  , try ConfigFlag "-C"
+  ]
   where
     try f prefix = f <$> stripPrefix prefix arg
 

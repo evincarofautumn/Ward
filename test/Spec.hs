@@ -5,6 +5,7 @@ module Main
   ) where
 
 import Args (Args(Args))
+import Config (Config(Config), Restriction(..))
 import Data.IORef -- *
 import Data.Text (Text)
 import Data.Traversable (forM)
@@ -13,9 +14,12 @@ import Language.C.Data.Node (NodeInfo)
 import Language.C.System.GCC (newGCC)
 import Test.HUnit hiding (errors)
 import Test.Hspec
+import Text.Parsec (ParseError)
 import Types
 import qualified Args
 import qualified Check
+import qualified Config
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 
@@ -24,6 +28,55 @@ main = hspec spec
 
 spec :: Spec
 spec = do
+
+  describe "with config files" $ do
+
+    it "accepts empty config" $ do
+      configTest "" $ Right mempty
+
+    it "accepts comment at end of file" $ do
+      configTest
+        "// comment"
+        $ Right mempty
+
+    it "accepts multiple comments" $ do
+      configTest
+        "// comment\n\
+        \// comment\n"
+        $ Right mempty
+
+    it "accepts permission declaration" $ do
+      configTest
+        "perm1;"
+        $ Right $ Config $ Map.singleton "perm1" []
+
+    it "accepts multiple permission declarations" $ do
+      configTest
+        "perm1; perm2;"
+        $ Right $ Config $ Map.fromList
+          [ ("perm1", [])
+          , ("perm2", [])
+          ]
+
+    it "accepts relationship declaration" $ do
+      configTest
+        "perm1 -> perm2;"
+        $ Right $ Config $ Map.singleton "perm1" [("perm2", Nothing)]
+
+    it "accepts relationship declaration with description" $ do
+      configTest
+        "perm1 -> perm2 \"perm1 implies perm2\";"
+        $ Right $ Config $ Map.singleton "perm1"
+          [ ("perm2", Just "perm1 implies perm2")
+          ]
+
+    it "accepts relationship declaration with complex expression" $ do
+      configTest
+        "p1 -> p2 & p3 | p4 & !p5 | !(p6 & p7);"
+        $ Right $ Config $ Map.singleton "p1"
+          [ ("p2" :& "p3" :| "p4" :& Not "p5" :| Not ("p6" :& "p7"), Nothing)
+          ]
+
   describe "with simple errors" $ do
 
     it "reports invalid permission actions" $ do
@@ -78,9 +131,13 @@ defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"
   , Args.translationUnitPaths = []
-  , Args.flags = []
+  , Args.implicitPermissions = []
   , Args.preprocessorFlags = []
+  , Args.configFilePaths = []
   }
+
+configTest :: String -> Either ParseError Config -> IO ()
+configTest source expected = Config.fromSource "test" source `shouldBe` expected
 
 wardTest
   :: Args
@@ -94,9 +151,8 @@ wardTest args check = do
     $ Args.preprocessorFlags args
   let
     implicitPermissions = Set.fromList
-      [ Permission $ Text.pack permission
-      | Args.GrantFlag permission <- Args.flags args
-      ]
+      $ map (Permission . Text.pack)
+      $ Args.implicitPermissions args
   case sequence parseResults of
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do

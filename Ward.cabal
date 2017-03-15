@@ -17,11 +17,13 @@ executable ward
   main-is:             Main.hs
   other-modules:       Args
                      , Check
+                     , Config
                      , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , containers
                      , language-c >= 0.6
+                     , parsec
                      , pretty
                      , text
                      , transformers
@@ -40,6 +42,7 @@ test-suite test
                      , HUnit
                      , hspec
                      , language-c
+                     , parsec
                      , pretty
                      , text
                      , transformers
