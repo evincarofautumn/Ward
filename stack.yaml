@@ -1,9 +1,6 @@
-resolver: lts-7.11
+resolver: nightly-2017-03-15
 packages:
 - '.'
-- location:
-    git: https://github.com/visq/language-c.git
-    commit: 431042153acb4ce39de7ee3d1baf82e7c497cdb4
 extra-deps: []
 flags: {}
 extra-package-dbs: []
