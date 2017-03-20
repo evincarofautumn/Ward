@@ -110,6 +110,16 @@ spec = do
             [(_, "because of call to 'foo', need permission 'baz' not present in context []")] -> True
             _ -> False
 
+    it "reports disallowed permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/disallowed-permission.c"] }
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "because of call to 'foo', denying disallowed permission 'baz' present in context [baz]")] -> True
+            _ -> False
+
   describe "with local permissions" $ do
 
     it "reports missing permission" $ do
@@ -124,6 +134,26 @@ spec = do
               , (_, "because of call to 'requires_lock',\
                     \ need permission 'locked' for variable 'q'\
                     \ not present in context []")]
+              -> True
+            _ -> False
+
+
+    it "reports disallowed permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/disallowed-with-subject.c"] }
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [ (_, "because of call to 'requires_lock',\
+                  \ need permission 'locked' for variable 'p'\
+                  \ not present in context []")
+              , (_, "because of call to 'denies_lock',\
+                  \ denying disallowed permission 'locked' for variable 'p'\
+                  \ present in context [locked]")
+              , (_, "because of call to 'lock',\
+                  \ denying disallowed permission 'locked' for variable 'p'\
+                  \ present in context [locked]")
+              ]
               -> True
             _ -> False
 

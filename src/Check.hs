@@ -371,6 +371,7 @@ checkFunctions global
       (PermissionAction action mSubject permission) = case action of
         Need -> applyPermissionAction (NoReason pos) argumentNames local
           $ PermissionAction Grant mSubject permission
+        Deny -> return local
         Grant -> return local
         Revoke -> return local  -- FIXME: Not sure if this is correct.
         Waive -> return local
@@ -445,6 +446,48 @@ checkFunctions global
               , show $ Set.toList $ localPermissionState local
               ]
             return local
+
+        Deny
+          | Just subject <- mSubject
+          -- FIXME: Avoid fromJust.
+          -> let
+            argumentName = fromJust (argumentNames !! subject)
+            in case Map.lookup argumentName $ localVarPermissions local of
+              Just varPermissions
+
+                -- The variable has the disallowed permission: report it.
+                | permission `Set.member` varPermissions -> do
+                  record $ Error (reasonPos reason) $ Text.pack $ concat
+                    [ "because of "
+                    , show reason
+                    , ", denying disallowed permission '"
+                    , show permission
+                    , "' for variable '"
+                    -- FIXME: Avoid fromJust.
+                    , fromJust $ argumentNames !! subject
+                    , "' present in context "
+                    , show $ Set.toList varPermissions
+                    ]
+                  return local
+
+              -- The variable does not have permissions, or the permissions it
+              -- has don't include the disallowed one: do nothing.
+              _ -> return local
+
+          -- No subject, and permission in the local context: report it.
+          | permission `Set.member` localPermissionState local -> do
+            record $ Error (reasonPos reason) $ Text.pack $ concat
+              [ "because of "
+              , show reason
+              , ", denying disallowed permission '"
+              , show permission
+              , "' present in context "
+              , show $ Set.toList $ localPermissionState local
+              ]
+            return local
+
+          -- No subject, and permission not present: do nothing.
+          | otherwise -> return local
 
         Grant
           -- When granting a permission to a particular subject, the name of the
@@ -649,6 +692,7 @@ extractPermissionActions attributes = fmap Set.fromList . runListT $ do
       mzero
   action <- case actionName of
     "need" -> return Need
+    "deny" -> return Deny
     "grant" -> return Grant
     "revoke" -> return Revoke
     "waive" -> return Waive

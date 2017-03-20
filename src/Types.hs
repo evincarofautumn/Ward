@@ -73,6 +73,10 @@ data Action
   -- change the context.
   = Need
 
+  -- | The context must *not* contain the given permission. This action does not
+  -- change the context.
+  | Deny
+
   -- | After this action, the given permission is added to the context. The
   -- context may contain the permission already.
   | Grant
@@ -120,6 +124,7 @@ instance Show Reason where
 instance Show Action where
   show action = case action of
     Need -> "need"
+    Deny -> "deny"
     Grant -> "grant"
     Revoke -> "revoke"
     Waive -> "waive"
