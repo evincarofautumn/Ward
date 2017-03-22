@@ -2,11 +2,11 @@
 
 A static analysis tool for C.
 
-Ward accepts C99 source files, annotated with *permissions*, and verifies that permissions are correct for all top-level functions. A permission is a constraint on the context in which some code is allowed to run, and can be used to verify things like locking and signal-safety.
+Ward accepts C99 source files, annotated with *permissions*, and verifies that permissions are correct for all top-level functions. A permission is a constraint on the context in which some code is allowed to run, and can be used to verify things like locking, signal-safety, program phases (e.g., initialization and shutdown), and memory allocation (e.g., disallowing allocation in performance- or safety-critical code).
 
-C programs tend to have a fair amount of global state, which can produce subtle errors if used incorrectly. Ward is designed to make it easier to use this sort of state correctly.
+C programs tend to have a fair amount of global state, which can produce subtle errors if used incorrectly. Ward is designed to make it easier to use this sort of state correctly. It’s a fairly liberal analysis—the goal is to call attention to suspicious code, not verify everything precisely.
 
-## Building & Running
+## Building
 
 Ward is written in Haskell using the [`language-c`](https://hackage.haskell.org/package/language-c) package for parsing C99. You need [Stack](https://docs.haskellstack.org/en/stable/README/) to build it.
 
@@ -23,13 +23,17 @@ SYNOPSIS
 
 `stack install` will place a copy of the executable in `~/.local/bin`.
 
-Ward accepts a path to a C preprocessor (e.g., `gcc`), a list of paths to C sources, options for granting implicit permissions, and additional flags to pass to the preprocessor. On OS X, you’ll want to pass `-fno-blocks` or `-U__BLOCKS__` because the C parsing library used by Ward does not support Apple’s block extension. A typical invocation looks like this:
+## Running
+
+Ward accepts a path to a C preprocessor (e.g., `gcc`), a list of paths to C sources, options for granting implicit permissions, and additional flags to pass to the preprocessor. On OS X, you’ll want to pass `-fno-blocks` or `-U__BLOCKS__` because the C parsing library used by Ward [does not yet support Apple’s block extension](https://github.com/visq/language-c/issues/15). A typical invocation looks like this:
 
 ```
 ward gcc foo.c bar.c --grant=malloc -- -I/some/include/path -U__BLOCKS__
 ```
 
-## Annotating
+Ward should build and run on OS X and Linux; it may work on Windows with a suitable preprocessor installed, but this hasn’t been tested.
+
+## Annotating Your Code
 
 Ward accepts annotations in the form of function-level attributes, which specify permissions and the actions Ward should take with them.
 
@@ -42,6 +46,7 @@ An action may be any of the following:
 | Action      | Effect |
 | ----------- | ------ |
 | `need(p)`   | When this function is called, `p` must be in the context. |
+| `deny(p)`   | When this function is called, `p` must *not* be in the context. |
 | `waive(p)`  | If `--grant=p` was specified, this function is *not* granted `p`. |
 | `grant(p)`  | After this function is called, `p` is added to the context. |
 | `revoke(p)` | After this function is called, `p` is removed from the context. |
@@ -90,13 +95,21 @@ By implicitly granting `malloc`, you only need to annotate those functions that 
 
 In this way, Ward is pay-as-you-go: you only need to annotate and verify the specific source files and permissions you’re interested in, and you can define whatever meanings you like for a permission, because it’s just a label.
 
-## Deficiencies
+## Known Deficiencies
+
+### No Indirect Calls
 
 Ward currently does not handle indirect calls. In practice this is not a significant limitation, as the vast majority of calls in typical C code are direct, but it may be addressed in the future.
 
-It seems to be usable and effective in practice, but it’s not very well tested. I’d like to add a comprehensive test suite.
+### Limited Testing
 
-Permissions are created automatically at their first use, so Ward annotations are somewhat susceptible to typos. It would be good to improve the error reporting in general, and allow declaring permissions, e.g., on the command line or in a configuration file. Likewise, annotations can become cumbersome if one permission is meant to imply another—for instance, you may want `waive(signal_unsafe)` to also `waive(malloc)`—so I’d like to allow subtyping of permissions somehow, if there’s interest.
+It seems to be usable and effective in practice, but it’s not very well tested. I’m working on adding [a comprehensive test suite](https://github.com/evincarofautumn/Ward/tree/master/test).
+
+### Limited Diagnostics
+
+Permissions are created automatically at their first use, so Ward annotations are somewhat susceptible to typos. I plan to [improve the error reporting in general](https://github.com/evincarofautumn/Ward/issues/3), and support [declaring permissions in a configuration file](https://github.com/evincarofautumn/Ward/issues/1), allowing one permission to imply another—for instance, `waive(signal_unsafe)` will also `waive(malloc)` if `malloc -> signal_unsafe`.
+
+### No Complex Control Flow
 
 It also doesn’t handle non-trivial control flow very well, so you may need to restructure some code in order to make it checkable. For example, Ward cannot verify this, because the `locked` permission is conditional:
 
