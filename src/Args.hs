@@ -1,5 +1,3 @@
-{-# LANGUAGE LambdaCase #-}
-
 module Args
   ( Args(..)
   , Flag(..)
@@ -53,7 +51,7 @@ defaultPreprocessorFlags = ["-D__WARD__"]
 data Flag = GrantFlag String | ConfigFlag FilePath
 
 parseFlag :: String -> Either String Flag
-parseFlag arg = maybe (Left arg) Right $ foldr (<|>) empty
+parseFlag arg = maybe (Left arg) Right $ asum
   [ try GrantFlag "--grant="
   , try GrantFlag "-G"
   , try ConfigFlag "--config="

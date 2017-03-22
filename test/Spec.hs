@@ -23,6 +23,8 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
 
+{-# ANN module ("HLint: ignore Redundant do" :: String) #-}
+
 main :: IO ()
 main = hspec spec
 

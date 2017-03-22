@@ -1,8 +1,8 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
 
+import Control.Monad (unless)
 import Data.IORef -- *
 import Data.Traversable (forM)
 import Language.C (parseCFile)
@@ -15,6 +15,8 @@ import qualified Check
 import qualified Config
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+
+{-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
 main :: IO ()
 main = do
