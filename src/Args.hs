@@ -83,5 +83,22 @@ usage = do
 \    --grant=<perm>\n\
 \    -G<perm>\n\
 \        Implicitly grant <perm> unless explicitly waived.\n\
+\\n\
+\    --config=<file>\n\
+\    -C<file>\n\
+\        Read permission information from configuration <file>.\n\
+\\n\
+\        A config consists of a series of permission declarations:\n\
+\\n\
+\            permission_name;\n\
+\\n\
+\        Or restrictions using the operators '&' (AND), '|' (OR), and '!' (NOT):\n\
+\\n\
+\            explicit_permission -> implicit_permission;\n\
+\            running -> !initializing & !shutting_down;\n\
+\            access_globals -> globals_locked | single_threaded;\n\
+\\n\
+\        Config files may include comments, which begin with '//' and continue\n\
+\        to the end of the line.\n\
 \\&"
   exitFailure
