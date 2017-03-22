@@ -4,7 +4,9 @@ module Check
   ( translationUnits
   ) where
 
+import Config (Config, Restriction(..))
 import Control.Monad (mzero)
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.List -- *
 import Data.Foldable (foldlM, foldrM, traverse_)
@@ -19,6 +21,7 @@ import Language.C.Syntax.AST -- *
 import Language.C.Syntax.Constants -- *
 import Text.PrettyPrint (render)
 import Types
+import qualified Config
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -56,14 +59,14 @@ instance Monoid LocalContext where
       (localVarPermissions a) (localVarPermissions b)
     }
 
-translationUnits :: [CTranslUnit] -> Set Permission -> Logger ()
-translationUnits tus implicitPermissions = do
+translationUnits :: [CTranslUnit] -> Set Permission -> Config -> Logger ()
+translationUnits tus implicitPermissions config = do
   -- FIXME: Avoid collisions with static definitions.
   let translationUnit = joinTranslationUnits tus
   global <- globalContextFromTranslationUnit
     implicitPermissions translationUnit
   let symbolTable = globalPermissionActions global
-  checkFunctions global
+  checkFunctions global config
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
@@ -75,8 +78,8 @@ joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
-checkFunctions :: GlobalContext -> Logger ()
-checkFunctions global
+checkFunctions :: GlobalContext -> Config -> Logger ()
+checkFunctions global config
   = traverse_ (checkFunction mempty) $ globalFunctions global
   where
     checkFunction :: LocalContext -> CFunDef -> Logger ()
@@ -102,11 +105,11 @@ checkFunctions global
         , "'"
         ]
       -- Grant/waive permissions locally.
-      local' <- foldlM (applyPreAction pos parameterNames)
+      local' <- foldlM (applyPreAction ident parameterNames)
         local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
-      local''' <- foldlM (applyPermissionAction (NoReason pos) parameterNames)
+      local''' <- foldlM (applyPermissionAction (BecausePostcondition ident) parameterNames)
         local'' permissionActions
       -- TODO: check that all added permissions (inferred \ declared) have been
       -- granted, and all dropped permissions (declared \ inferred) have been
@@ -362,15 +365,18 @@ checkFunctions global
       CInitList initializers _ -> checkInitializerList local initializers
 
     applyPreAction
-      :: NodeInfo
+      :: Ident
       -> [Maybe String]
       -> LocalContext
       -> PermissionAction
       -> Logger LocalContext
-    applyPreAction pos argumentNames local
+    applyPreAction ident argumentNames local
       (PermissionAction action mSubject permission) = case action of
-        Need -> applyPermissionAction (NoReason pos) argumentNames local
-          $ PermissionAction Grant mSubject permission
+        Need -> do
+          let reason = BecausePrecondition ident
+          local' <- applyPermissionAction reason argumentNames local
+            $ PermissionAction Grant mSubject permission
+          applyRestrictions Grant reason permission argumentNames local'
         Deny -> return local
         Grant -> return local
         Revoke -> return local  -- FIXME: Not sure if this is correct.
@@ -433,7 +439,7 @@ checkFunctions global
 
           -- No subject, and permission in the local context: do nothing.
           | permission `Set.member` localPermissionState local
-          -> return local
+          -> applyRestrictions action reason permission argumentNames local
 
           -- No subject, and permission not present: report it.
           | otherwise -> do
@@ -528,9 +534,11 @@ checkFunctions global
               , show $ Set.toList $ localPermissionState local
               ]
 -}
-            return local
-          | otherwise -> return local
-            { localPermissionState = Set.insert permission
+            applyRestrictions action reason permission argumentNames local
+
+          | otherwise
+          -> applyRestrictions action reason permission argumentNames
+            local { localPermissionState = Set.insert permission
               $ localPermissionState local }
 
         Revoke
@@ -566,6 +574,33 @@ checkFunctions global
         -- Implicitly granted permissions can't have a subject, so we don't need
         -- to check for one here.
         Waive -> return local
+
+    applyRestrictions
+      :: Action
+      -> Reason
+      -> Permission
+      -> [Maybe String]
+      -> LocalContext
+      -> Logger LocalContext
+    applyRestrictions action reason permission argumentNames local
+      = case Config.query permission config of
+        Nothing -> case action of
+          Need -> do
+            record $ Warning (reasonPos reason) $ Text.pack $ concat
+              [ "ward warning: use of undeclared permission '"
+              , show permission
+              , "'"
+              ]
+            pure local
+          Grant -> pure local
+          _ -> error "invalid restriction action"
+        Just [(Literal impliedPermission, _)] -> do
+          liftIO $ putStrLn $ "found literal restriction " ++ show impliedPermission ++ " for permission " ++ show permission
+          applyPermissionAction reason argumentNames local
+            (PermissionAction action Nothing impliedPermission)
+        Just restrictions -> do
+          liftIO $ putStrLn $ "found non-literal restrictions " ++ show restrictions ++ " for permission " ++ show permission
+          pure local
 
 -- | Verifies that two local contexts match, using a prior context to produce
 -- detailed warnings in the event of a mismatch.

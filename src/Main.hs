@@ -44,7 +44,7 @@ main = do
     Right translationUnits -> do
       entriesRef <- newIORef []
       flip runLogger entriesRef
-        $ Check.translationUnits translationUnits implicitPermissions
+        $ Check.translationUnits translationUnits implicitPermissions config
       entries <- readIORef entriesRef
       mapM_ print entries
       let (notes, warnings, errors) = partitionEntries entries

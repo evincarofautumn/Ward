@@ -12,6 +12,7 @@ import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Node (NodeInfo)
 import Language.C.System.GCC (newGCC)
+import System.FilePath ((</>))
 import Test.HUnit hiding (errors)
 import Test.Hspec
 import Text.Parsec (ParseError)
@@ -80,8 +81,7 @@ spec = do
   describe "with simple errors" $ do
 
     it "reports invalid permission actions" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/invalid-permission-action.c"] }
+      wardTest mempty (file "invalid-permission-action.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool (unlines $ "expected action error but got:" : map show errors)
           $ case errors of
@@ -89,8 +89,7 @@ spec = do
             _ -> False
 
     it "reports multiple invalid permission actions" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/invalid-permission-actions.c"] }
+      wardTest mempty (file "invalid-permission-actions.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected action error but got:" : map show errors)
@@ -101,18 +100,18 @@ spec = do
             _ -> False
 
     it "reports missing permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/missing-permission.c"] }
+      wardTest mempty (file "missing-permission.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [(_, "because of call to 'foo', need permission 'baz' not present in context []")] -> True
+            [(_, "because of call to 'foo',\
+                 \ need permission 'baz'\
+                 \ not present in context []")] -> True
             _ -> False
 
     it "reports disallowed permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/disallowed-permission.c"] }
+      wardTest mempty (file "disallowed-permission.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
@@ -123,8 +122,7 @@ spec = do
   describe "with local permissions" $ do
 
     it "reports missing permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/permission-with-subject.c"] }
+      wardTest mempty (file "permission-with-subject.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
@@ -137,10 +135,8 @@ spec = do
               -> True
             _ -> False
 
-
     it "reports disallowed permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/disallowed-with-subject.c"] }
+      wardTest mempty (file "disallowed-with-subject.c")
         $ \ (_notes, _warnings, errors) -> do
         assertBool (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
@@ -157,6 +153,23 @@ spec = do
               -> True
             _ -> False
 
+  describe "with restrictions" $ do
+    it "reports missing implied permission" $ do
+      wardTest (config "explicit; implied; explicit -> implied;")
+        (file "missing-implied-permission.c")
+        $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "because of call to 'foo',\
+                 \ need permission 'implied'\
+                 \ not present in context [explicit]")] -> True
+            _ -> False
+
+  where
+    config = either (error . show) id . Config.fromSource "test-config"
+    file path = defArgs { Args.translationUnitPaths = ["test" </> path] }
+
 defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"
@@ -170,10 +183,11 @@ configTest :: String -> Either ParseError Config -> IO ()
 configTest source expected = Config.fromSource "test" source `shouldBe` expected
 
 wardTest
-  :: Args
+  :: Config
+  -> Args
   -> (([(NodeInfo, Text)], [(NodeInfo, Text)], [(NodeInfo, Text)]) -> IO ())
   -> IO ()
-wardTest args check = do
+wardTest config args check = do
   let temporaryDirectory = Nothing
   let preprocessor = newGCC $ Args.preprocessorPath args
   parseResults <- forM (Args.translationUnitPaths args)
@@ -188,6 +202,6 @@ wardTest args check = do
     Right translationUnits -> do
       entriesRef <- newIORef []
       flip runLogger entriesRef
-        $ Check.translationUnits translationUnits implicitPermissions
+        $ Check.translationUnits translationUnits implicitPermissions config
       entries <- readIORef entriesRef
       check (partitionEntries entries)

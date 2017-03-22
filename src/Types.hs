@@ -100,11 +100,13 @@ data PermissionAction = PermissionAction !Action !(Maybe Int) !Permission
 
 -- | Why a particular permission action is being applied.
 data Reason
-  = NoReason !NodeInfo
+  = BecausePrecondition !Ident
+  | BecausePostcondition !Ident
   | BecauseCall !Ident
 
 reasonPos :: Reason -> NodeInfo
-reasonPos (NoReason pos) = pos
+reasonPos (BecausePrecondition (Ident _ _ pos)) = pos
+reasonPos (BecausePostcondition (Ident _ _ pos)) = pos
 reasonPos (BecauseCall (Ident _ _ pos)) = pos
 
 instance Show Permission where
@@ -117,9 +119,13 @@ instance Show PermissionAction where
     = concat [show action, "(", show permission, ")"]
 
 instance Show Reason where
-  show = \ case
-    NoReason _ -> "unspecified reason"
-    BecauseCall (Ident name _ _) -> concat ["call to '", name, "'"]
+  show = concat . \ case
+    BecausePrecondition (Ident name _ _)
+      -> ["precondition of '", name, "'"]
+    BecausePostcondition (Ident name _ _)
+      -> ["postcondition of '", name, "'"]
+    BecauseCall (Ident name _ _)
+      -> ["call to '", name, "'"]
 
 instance Show Action where
   show action = case action of
