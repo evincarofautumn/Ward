@@ -25,7 +25,7 @@ main = do
 
   unless (null $ Args.configFilePaths args) $ do
     putStrLn "Loading config files..."
-  config <- do
+  _config <- do
     parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
     case sequence parsedConfigs of
       Right configs -> pure $ mconcat configs
@@ -52,7 +52,7 @@ main = do
         in Check.translationUnits translationUnits implicitPermissions
       entries <- readIORef entriesRef
       mapM_ print entries
-      let (notes, warnings, errors) = partitionEntries entries
+      let (_notes, warnings, errors) = partitionEntries entries
       putStrLn $ concat
         [ "Warnings: ", show (length warnings)
         , ", Errors: ", show (length errors)

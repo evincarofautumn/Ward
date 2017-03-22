@@ -4,7 +4,7 @@ module Check
   ( translationUnits
   ) where
 
-import Control.Monad (mzero)
+import Control.Monad (mzero, void)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.List -- *
 import Data.Foldable (foldlM, foldrM, traverse_)
@@ -64,7 +64,6 @@ translationUnits tus implicitPermissions = do
   let translationUnit = joinTranslationUnits tus
   global <- globalContextFromTranslationUnit
     implicitPermissions translationUnit
-  let symbolTable = globalPermissionActions global
   checkFunctions global
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
@@ -83,7 +82,7 @@ checkFunctions global
   where
     checkFunction :: LocalContext -> CFunDef -> Logger ()
     checkFunction local (CFunDef specifiers
-      declarator@(CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
+      (CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
       parameters body _) = do
       let
         parameterNames =
@@ -108,7 +107,7 @@ checkFunctions global
         local permissionActions
       local'' <- checkStatement local' body
       -- Verify postconditions.
-      local''' <- foldlM (applyPermissionAction (NoReason pos) parameterNames)
+      void $ foldlM (applyPermissionAction (NoReason pos) parameterNames)
         local'' permissionActions
       -- TODO: check that all added permissions (inferred \ declared) have been
       -- granted, and all dropped permissions (declared \ inferred) have been
@@ -185,7 +184,7 @@ checkFunctions global
       CFor initializer mCondition mStep body _ -> do
         local' <- case initializer of
           Left mExpression -> foldlM checkExpression local mExpression
-          Right declaration -> return local  -- TODO: check initializer
+          Right _declaration -> return local  -- TODO: check initializer
         local'' <- foldlM checkExpression local' mCondition
         local''' <- checkStatement local'' body
         foldlM checkExpression local''' mStep
@@ -220,6 +219,7 @@ checkFunctions global
       CBlockDecl (CDecl _specifiers declarations _)
         -> foldlM checkInitializer local
           [initializer | (_, Just initializer, _) <- declarations]
+      CBlockDecl (CStaticAssert _ _ _) -> return local
       -- GNU nested function
       CNestedFunDef{} -> return local
 
@@ -341,6 +341,9 @@ checkFunctions global
 
       -- GNU builtins: va_arg, offsetof, __builtin_types_compatible_p
       CBuiltinExpr{} -> return local
+
+      -- C11 _Generic(controlling_expression, association_list)
+      CGenericSelection expression _ _ -> checkExpression local expression
 
     checkInitializerList :: LocalContext -> CInitList -> Logger LocalContext
     checkInitializerList = foldlM $ \ local (_partDesignators, initializer)
@@ -601,9 +604,9 @@ insertTopLevelElement implicitPermissions element global = case element of
         (globalPermissionActions global) identPermissions }
 
   -- For a function definition, record the function body in the context.
-  -- TODO: parse attributes from parameters
+  -- TODO: parse attributes from parameters?
   CFDefExt definition@(CFunDef specifiers
-    (CDeclr (Just ident) _ _ _ _) parameters _body _) -> do
+    (CDeclr (Just ident) _ _ _ _) _parameters _body _) -> do
       specifierPermissions <- extractPermissionActions
         [attr | CTypeQual (CAttrQual attr) <- specifiers]
       return global
@@ -613,6 +616,7 @@ insertTopLevelElement implicitPermissions element global = case element of
           $ globalFunctions global
         }
 
+  CDeclExt CStaticAssert{} -> return global
   CFDefExt{} -> return global  -- TODO: warn?
   CAsmExt{} -> return global  -- TODO: warn?
   where
@@ -646,7 +650,7 @@ extractDeclaratorPermissionActions
 extractDeclaratorPermissionActions = foldrM go []
   where
     -- TODO: Do something with derived declarators?
-    go (Just (CDeclr (Just ident) derived _ attributes _), _, _) acc = do
+    go (Just (CDeclr (Just ident) _derived _ attributes _), _, _) acc = do
       permissionActions <- extractPermissionActions attributes
       return $ if Set.null permissionActions
         then acc
