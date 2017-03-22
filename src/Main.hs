@@ -20,33 +20,36 @@ import qualified Data.Text as Text
 
 main :: IO ()
 main = do
+
   args <- Args.parse
-  let temporaryDirectory = Nothing
-  let preprocessor = newGCC $ Args.preprocessorPath args
-  parsedConfigs <- if null $ Args.configFilePaths args then pure [] else do
+
+  unless (null $ Args.configFilePaths args) $ do
     putStrLn "Loading config files..."
-    traverse Config.fromFile $ Args.configFilePaths args
-  config <- case sequence parsedConfigs of
-    Left parseError -> do
-      hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
-      exitFailure
-    Right configs -> pure $ mconcat configs
+  config <- do
+    parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
+    case sequence parsedConfigs of
+      Right configs -> pure $ mconcat configs
+      Left parseError -> do
+        hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
+        exitFailure
+
   putStrLn "Preprocessing..."
-  parseResults <- forM (Args.translationUnitPaths args)
-    $ parseCFile preprocessor temporaryDirectory
-    $ Args.preprocessorFlags args
-  let
-    implicitPermissions = Set.fromList
-      $ map (Permission . Text.pack)
-      $ Args.implicitPermissions args
+  parseResults <- let
+    temporaryDirectory = Nothing
+    preprocessor = newGCC $ Args.preprocessorPath args
+    in forM (Args.translationUnitPaths args)
+      $ parseCFile preprocessor temporaryDirectory
+      $ Args.preprocessorFlags args
+
   putStrLn "Checking..."
   case sequence parseResults of
-    Left parseError -> do
-      hPutStrLn stderr $ "Parse error:\n" ++ show parseError
     Right translationUnits -> do
       entriesRef <- newIORef []
-      flip runLogger entriesRef
-        $ Check.translationUnits translationUnits implicitPermissions
+      flip runLogger entriesRef $ let
+        implicitPermissions = Set.fromList
+          $ map (Permission . Text.pack)
+          $ Args.implicitPermissions args
+        in Check.translationUnits translationUnits implicitPermissions
       entries <- readIORef entriesRef
       mapM_ print entries
       let (notes, warnings, errors) = partitionEntries entries
@@ -54,3 +57,5 @@ main = do
         [ "Warnings: ", show (length warnings)
         , ", Errors: ", show (length errors)
         ]
+    Left parseError -> do
+      hPutStrLn stderr $ "Parse error:\n" ++ show parseError

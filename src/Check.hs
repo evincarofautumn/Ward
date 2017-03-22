@@ -26,8 +26,8 @@ import qualified Data.Text as Text
 {-# ANN module "HLint: ignore Redundant do" #-}
 
 data GlobalContext = GlobalContext
-  { globalPermissionActions :: !(Map Ident (Set PermissionAction))
-  , globalFunctions :: !(Map Ident CFunDef)
+  { globalFunctions :: !(Map Ident CFunDef)
+  , globalPermissionActions :: !(Map Ident (Set PermissionAction))
   }
 
 data LocalContext = LocalContext
@@ -182,11 +182,7 @@ checkFunctions global
 
       -- for (init; expr; expr) stmt
       -- Treat as init; while (expr) { stmt; expr; } ...maybe?
-      CFor initializer{-:: Either (Maybe (CExpression a)) (CDeclaration a) -}
-        mCondition -- Maybe (CExpression a)
-        mStep -- Maybe (CExpression a)
-        body
-        _ -> do
+      CFor initializer mCondition mStep body _ -> do
         local' <- case initializer of
           Left mExpression -> foldlM checkExpression local mExpression
           Right declaration -> return local  -- TODO: check initializer
@@ -300,25 +296,17 @@ checkFunctions global
         local' <- checkExpression local function
         local'' <- foldlM checkExpression local' arguments
         case function of
-          CVar ident _
+          CVar ident@(Ident name _ _) _
             -> case Map.lookup ident $ globalPermissionActions global of
               Just permissionActions -> do
-{-
-                warn $ concat
-                  [ "ward note: applying actions: "
-                  , show $ Set.toList permissionActions
-                  ]
--}
                 foldlM (applyPermissionAction (BecauseCall ident) argumentNames)
                   local'' permissionActions
               Nothing -> do
-{-
-                warn $ concat
-                  [ "ward warning: calling function '"
+                record $ Warning callPos $ Text.pack $ concat
+                  [ "calling function '"
                   , name
                   , "' but can't find permissions for it"
                   ]
--}
                 return local''
           _ -> do
             record $ Warning callPos $ Text.pack $ concat
@@ -377,10 +365,6 @@ checkFunctions global
         Grant -> return local
         Revoke -> return local  -- FIXME: Not sure if this is correct.
         Waive -> return local
-        {-
-          applyPermissionAction NoReason local
-            $ PermissionAction Revoke permission
-        -}
 
     applyPermissionAction
       :: Reason
@@ -522,14 +506,12 @@ checkFunctions global
 
           -- If there is no subject, we grant the permission to all local calls.
           | permission `Set.member` localPermissionState local -> do
-{-
-            putStrLn $ concat
-              [ "ward warning: granting permission '"
+            record $ Warning (reasonPos reason) $ Text.pack $ concat
+              [ "granting permission '"
               , show permission
               , "' already present in context "
               , show $ Set.toList $ localPermissionState local
               ]
--}
             return local
           | otherwise -> return local
             { localPermissionState = Set.insert permission
@@ -582,14 +564,12 @@ unifyBranches pos prior true false
   | otherwise = do
     let union = true <> false
     record $ Warning pos $ Text.pack $ concat
-      [ "ward warning: "
-      , show $ localPermissionState prior
+      [ show $ localPermissionState prior
       , " -> "
       , show $ localPermissionState true
       , " /= "
       , show $ localPermissionState false
-      , "\n"
-      , "ward warning: unsafely assuming their union "
+      , "; unsafely assuming their union "
       , show $ localPermissionState union
       ]
     return union
