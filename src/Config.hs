@@ -18,6 +18,28 @@ import Types
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 
+-- A config consists of a series of permission declarations:
+--
+--     permission_name;
+--
+-- These may include Boolean expressions called "restrictions" that specify
+-- constraints on a permission using the OR '|', AND '&', and NOT '!' operators.
+--
+--     explicit_permission -> implicit_permission;
+--     running -> !initializing & !shutting_down;
+--     access_globals -> globals_locked | single_threaded;
+--
+-- A restriction may include a quoted description, to improve error reporting.
+--
+--     access_globals -> globals_locked | single_threaded
+--       "globals must be synchronized, except in single-threaded mode";
+--
+-- Config files may include comments, which begin with '//' and continue to the
+-- end of the line.
+--
+--     // Just a regular old comment.
+--
+
 newtype Config = Config (Map Permission [(Restriction, Maybe Description)])
   deriving (Eq, Show)
 

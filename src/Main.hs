@@ -49,7 +49,10 @@ main = do
         implicitPermissions = Set.fromList
           $ map (Permission . Text.pack)
           $ Args.implicitPermissions args
-        in Check.translationUnits translationUnits implicitPermissions
+        in Check.translationUnits
+          translationUnits
+          implicitPermissions
+          (Args.quiet args)
       entries <- readIORef entriesRef
       mapM_ print entries
       let (_notes, warnings, errors) = partitionEntries entries

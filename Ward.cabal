@@ -23,6 +23,7 @@ executable ward
   build-depends:       base
                      , containers
                      , language-c >= 0.6
+                     , optparse-applicative
                      , parsec
                      , pretty
                      , text
@@ -42,6 +43,7 @@ test-suite test
                      , HUnit
                      , hspec
                      , language-c
+                     , optparse-applicative
                      , parsec
                      , pretty
                      , text

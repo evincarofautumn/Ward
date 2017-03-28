@@ -166,6 +166,7 @@ defArgs = Args
   , Args.implicitPermissions = []
   , Args.preprocessorFlags = []
   , Args.configFilePaths = []
+  , Args.quiet = False
   }
 
 configTest :: String -> Either ParseError Config -> IO ()
@@ -189,7 +190,8 @@ wardTest args check = do
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do
       entriesRef <- newIORef []
-      flip runLogger entriesRef
-        $ Check.translationUnits translationUnits implicitPermissions
+      flip runLogger entriesRef $ let
+        quiet = False
+        in Check.translationUnits translationUnits implicitPermissions quiet
       entries <- readIORef entriesRef
       check (partitionEntries entries)

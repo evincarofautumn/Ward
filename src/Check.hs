@@ -58,13 +58,13 @@ instance Monoid LocalContext where
       (localVarPermissions a) (localVarPermissions b)
     }
 
-translationUnits :: [CTranslUnit] -> Set Permission -> Logger ()
-translationUnits tus implicitPermissions = do
+translationUnits :: [CTranslUnit] -> Set Permission -> Bool -> Logger ()
+translationUnits tus implicitPermissions quiet = do
   -- FIXME: Avoid collisions with static definitions.
   let translationUnit = joinTranslationUnits tus
   global <- globalContextFromTranslationUnit
     implicitPermissions translationUnit
-  checkFunctions global
+  checkFunctions global quiet
 
 joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
 joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
@@ -76,8 +76,8 @@ joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
-checkFunctions :: GlobalContext -> Logger ()
-checkFunctions global
+checkFunctions :: GlobalContext -> Bool -> Logger ()
+checkFunctions global quiet
   = traverse_ (checkFunction mempty) $ globalFunctions global
   where
     checkFunction :: LocalContext -> CFunDef -> Logger ()
@@ -97,7 +97,7 @@ checkFunctions global
         permissionActions = fromMaybe mempty
           (Map.lookup ident $ globalPermissionActions global)
           <> extractedActions
-      record $ Note pos $ Text.pack $ concat
+      record (not quiet) $ Note pos $ Text.pack $ concat
         [ "checking '"
         , name
         , "'"
@@ -160,7 +160,7 @@ checkFunctions global
         local' <- checkExpression local condition
         localTrue <- checkStatement local' true
         localFalse <- foldlM checkStatement local' mFalse
-        unifyBranches pos local' localTrue localFalse
+        unifyBranches pos local' localTrue localFalse quiet
 
       -- switch (expr) body
       -- Traverse all branches in body and take their union.
@@ -244,7 +244,7 @@ checkFunctions global
         local' <- checkExpression local a
         localTrue <- foldlM checkExpression local' mb
         localFalse <- checkExpression local' c
-        unifyBranches pos local' localTrue localFalse
+        unifyBranches pos local' localTrue localFalse quiet
 
       -- a op b
       CBinary _operator a b _ -> do
@@ -302,14 +302,14 @@ checkFunctions global
                 foldlM (applyPermissionAction (BecauseCall ident) argumentNames)
                   local'' permissionActions
               Nothing -> do
-                record $ Warning callPos $ Text.pack $ concat
+                record (not quiet) $ Warning callPos $ Text.pack $ concat
                   [ "calling function '"
                   , name
                   , "' but can't find permissions for it"
                   ]
                 return local''
           _ -> do
-            record $ Warning callPos $ Text.pack $ concat
+            record (not quiet) $ Warning callPos $ Text.pack $ concat
               [ "indirect call '"
               , render $ pretty function
               , "' not handled"
@@ -393,7 +393,7 @@ checkFunctions global
                 -- The variable has permissions, but not the required ones:
                 -- report it.
                 | otherwise -> do
-                  record $ Error (reasonPos reason) $ Text.pack $ concat
+                  record True $ Error (reasonPos reason) $ Text.pack $ concat
                     [ "because of "
                     , show reason
                     , ", need permission '"
@@ -408,7 +408,7 @@ checkFunctions global
 
               -- The variable does not have permissions: report it.
               Nothing -> do
-                record $ Error (reasonPos reason) $ Text.pack $ concat
+                record True $ Error (reasonPos reason) $ Text.pack $ concat
                   [ "because of "
                   , show reason
                   , ", need permission '"
@@ -426,7 +426,7 @@ checkFunctions global
 
           -- No subject, and permission not present: report it.
           | otherwise -> do
-            record $ Error (reasonPos reason) $ Text.pack $ concat
+            record True $ Error (reasonPos reason) $ Text.pack $ concat
               [ "because of "
               , show reason
               , ", need permission '"
@@ -446,7 +446,7 @@ checkFunctions global
 
                 -- The variable has the disallowed permission: report it.
                 | permission `Set.member` varPermissions -> do
-                  record $ Error (reasonPos reason) $ Text.pack $ concat
+                  record True $ Error (reasonPos reason) $ Text.pack $ concat
                     [ "because of "
                     , show reason
                     , ", denying disallowed permission '"
@@ -465,7 +465,7 @@ checkFunctions global
 
           -- No subject, and permission in the local context: report it.
           | permission `Set.member` localPermissionState local -> do
-            record $ Error (reasonPos reason) $ Text.pack $ concat
+            record True $ Error (reasonPos reason) $ Text.pack $ concat
               [ "because of "
               , show reason
               , ", denying disallowed permission '"
@@ -509,7 +509,7 @@ checkFunctions global
 
           -- If there is no subject, we grant the permission to all local calls.
           | permission `Set.member` localPermissionState local -> do
-            record $ Warning (reasonPos reason) $ Text.pack $ concat
+            record (not quiet) $ Warning (reasonPos reason) $ Text.pack $ concat
               [ "granting permission '"
               , show permission
               , "' already present in context "
@@ -541,7 +541,7 @@ checkFunctions global
             $ localPermissionState local }
 
           | otherwise -> do
-            record $ Error (reasonPos reason) $ Text.pack $ concat
+            record True $ Error (reasonPos reason) $ Text.pack $ concat
               [ "revoking permission '"
               , show permission
               , "' not present in context "
@@ -561,12 +561,13 @@ unifyBranches
   -> LocalContext  -- ^ Prior context.
   -> LocalContext  -- ^ Context from first branch.
   -> LocalContext  -- ^ Context from second branch.
+  -> Bool
   -> Logger LocalContext
-unifyBranches pos prior true false
+unifyBranches pos prior true false quiet
   | localPermissionState true == localPermissionState false = return true
   | otherwise = do
     let union = true <> false
-    record $ Warning pos $ Text.pack $ concat
+    record (not quiet) $ Warning pos $ Text.pack $ concat
       [ show $ localPermissionState prior
       , " -> "
       , show $ localPermissionState true
@@ -670,7 +671,7 @@ extractPermissionActions attributes = fmap Set.fromList . runListT $ do
       _
       -> return (permission, Just (fromInteger subject))
     other -> do
-      lift $ record $ Error pos $ Text.pack $ concat
+      lift $ record True $ Error pos $ Text.pack $ concat
         [ "malformed permission specifier '"
         , render $ pretty other
         , "'; ignoring"
@@ -683,7 +684,7 @@ extractPermissionActions attributes = fmap Set.fromList . runListT $ do
     "revoke" -> return Revoke
     "waive" -> return Waive
     _ -> do
-      lift $ record $ Error pos $ Text.pack $ concat
+      lift $ record True $ Error pos $ Text.pack $ concat
         [ "unknown permission action '"
         , actionName
         , "'; ignoring"

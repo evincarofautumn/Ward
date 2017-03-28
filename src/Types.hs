@@ -51,8 +51,9 @@ instance Monad Logger where
 instance MonadIO Logger where
   liftIO = Logger . const
 
-record :: Entry -> Logger ()
-record entry = Logger (\ entries -> modifyIORef' entries (entry :))
+record :: Bool -> Entry -> Logger ()
+record False _ = return ()
+record True entry = Logger (\ entries -> modifyIORef' entries (entry :))
 
 partitionEntries
   :: [Entry]
