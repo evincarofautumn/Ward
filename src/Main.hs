@@ -50,7 +50,7 @@ main = do
           $ map (Permission . Text.pack)
           $ Args.implicitPermissions args
         in Check.translationUnits
-          translationUnits
+          (zip (Args.translationUnitPaths args) translationUnits)
           implicitPermissions
           (Args.quiet args)
       entries <- readIORef entriesRef

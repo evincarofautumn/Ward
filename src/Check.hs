@@ -8,6 +8,7 @@ import Control.Monad (mzero, void)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.List -- *
 import Data.Foldable (foldlM, foldrM, traverse_)
+import Data.Generics (everywhere, mkT)
 import Data.Map (Map)
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Monoid -- *
@@ -58,7 +59,7 @@ instance Monoid LocalContext where
       (localVarPermissions a) (localVarPermissions b)
     }
 
-translationUnits :: [CTranslUnit] -> Set Permission -> Bool -> Logger ()
+translationUnits :: [(FilePath, CTranslUnit)] -> Set Permission -> Bool -> Logger ()
 translationUnits tus implicitPermissions quiet = do
   -- FIXME: Avoid collisions with static definitions.
   let translationUnit = joinTranslationUnits tus
@@ -66,15 +67,50 @@ translationUnits tus implicitPermissions quiet = do
     implicitPermissions translationUnit
   checkFunctions global quiet
 
-joinTranslationUnits :: [CTranslUnit] -> CTranslUnit
-joinTranslationUnits tus@(CTranslUnit _ firstLocation : _)
+joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
+joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _)
   = CTranslUnit
     (concat
-      [ externalDeclarations
-      | CTranslUnit externalDeclarations _ <- tus
+      [ prefixStatics path externalDeclarations
+      | (path, CTranslUnit externalDeclarations _) <- tus
       ])
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
+
+prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
+prefixStatics path decls = map prefixOne decls
+  where
+    statics =
+      [ name
+      | CFDefExt (CFunDef specifiers (CDeclr (Just (Ident name _ _)) _ _ _ _) _ _ _) <- decls
+      , CStatic _ : _ <- [[spec | CStorageSpec spec <- specifiers]]
+      ]
+    prefixOne decl = case decl of
+      CFDefExt (CFunDef specifiers
+        declr@(CDeclr (Just (Ident name hash namePos)) derived lit attrs declrPos) parameters body defPos)
+        | name `elem` statics
+        -> CFDefExt (CFunDef specifiers (CDeclr (Just ident') derived lit attrs declrPos) parameters body' defPos)
+        | otherwise
+        -> CFDefExt (CFunDef specifiers declr parameters body' defPos)
+        where
+          -- FIXME: Dunno if keeping the same hash is correct.
+          ident' = Ident (patchName name) hash namePos
+          body' = everywhere (mkT patchStatement) body
+      _ -> decl
+
+    patchName :: String -> String
+    patchName name = concat [path, "`", name]
+
+    patchStatement :: CStat -> CStat
+    patchStatement = everywhere (mkT patchExpression)
+
+    patchExpression :: CExpr -> CExpr
+    patchExpression = \case
+      CCall (CVar (Ident name hash namePos) varPos) arguments callPos
+        | name `elem` statics
+        -> CCall (CVar (Ident (patchName name) hash namePos) varPos)
+          arguments callPos
+      expr -> expr
 
 checkFunctions :: GlobalContext -> Bool -> Logger ()
 checkFunctions global quiet
