@@ -4,13 +4,13 @@
 module Types where
 
 import Control.Monad.IO.Class (MonadIO(..))
-import Data.IORef -- *
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import qualified Data.Text as Text
+import Control.Concurrent.Chan (Chan, writeChan)
 
 data Entry
   = Note !NodeInfo !Text
@@ -35,7 +35,7 @@ posPrefix (NodeInfo pos _ _) = concat
   , show $ posRow pos
   ]
 
-newtype Logger a = Logger { runLogger :: IORef [Entry] -> IO a }
+newtype Logger a = Logger { runLogger :: Chan (Maybe Entry) -> IO a }
 
 instance Functor Logger where
   fmap f (Logger g) = Logger $ fmap f . g
@@ -53,7 +53,10 @@ instance MonadIO Logger where
 
 record :: Bool -> Entry -> Logger ()
 record False _ = return ()
-record True entry = Logger (\ entries -> modifyIORef' entries (entry :))
+record True entry = Logger $ \ entries -> writeChan entries $ Just entry
+
+endLog :: Logger ()
+endLog = Logger $ \ entries -> writeChan entries Nothing
 
 partitionEntries
   :: [Entry]

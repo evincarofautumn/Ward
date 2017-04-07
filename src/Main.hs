@@ -1,9 +1,11 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Main (main) where
 
+import Control.Concurrent (forkIO)
+import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless)
-import Data.IORef -- *
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.System.GCC (newGCC)
@@ -44,21 +46,32 @@ main = do
   putStrLn "Checking..."
   case sequence parseResults of
     Right translationUnits -> do
-      entriesRef <- newIORef []
-      flip runLogger entriesRef $ let
-        implicitPermissions = Set.fromList
-          $ map (Permission . Text.pack)
-          $ Args.implicitPermissions args
-        in Check.translationUnits
+      entriesChan <- newChan
+      _checkThread <- forkIO $ flip runLogger entriesChan $ do
+        let
+          implicitPermissions = Set.fromList
+            $ map (Permission . Text.pack)
+            $ Args.implicitPermissions args
+        Check.translationUnits
           (zip (Args.translationUnitPaths args) translationUnits)
           implicitPermissions
           (Args.quiet args)
-      entries <- readIORef entriesRef
-      mapM_ print entries
-      let (_notes, warnings, errors) = partitionEntries entries
+        endLog
+      let
+        loop !warnings !errors = do
+          message <- readChan entriesChan
+          case message of
+            Nothing -> return (warnings, errors)
+            Just entry -> do
+              print entry
+              case entry of
+                Note{} -> loop warnings errors
+                Warning{} -> loop (warnings + 1) errors
+                Error{} -> loop warnings (errors + 1)
+      (warnings, errors) <- loop (0 :: Int) (0 :: Int)
       putStrLn $ concat
-        [ "Warnings: ", show (length warnings)
-        , ", Errors: ", show (length errors)
+        [ "Warnings: ", show warnings
+        , ", Errors: ", show errors
         ]
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError

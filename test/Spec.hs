@@ -6,7 +6,8 @@ module Main
 
 import Args (Args(Args))
 import Config (Config(Config), Restriction(..))
-import Data.IORef -- *
+import Control.Concurrent.Chan (getChanContents, newChan)
+import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
@@ -97,8 +98,8 @@ spec = do
         assertBool
           (unlines $ "expected action error but got:" : map show errors)
           $ case errors of
-            [ (_, "unknown permission action 'require'; ignoring")
-              , (_, "unknown permission action 'wave'; ignoring")
+            [ (_, "unknown permission action 'wave'; ignoring")
+              , (_, "unknown permission action 'require'; ignoring")
               ] -> True
             _ -> False
 
@@ -131,11 +132,12 @@ spec = do
         assertBool (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
             [ (_, "because of call to 'requires_lock',\
-                  \ need permission 'locked' for variable 'p'\
+                  \ need permission 'locked' for variable 'q'\
                   \ not present in context []")
               , (_, "because of call to 'requires_lock',\
-                    \ need permission 'locked' for variable 'q'\
-                    \ not present in context []")]
+                    \ need permission 'locked' for variable 'p'\
+                    \ not present in context []")
+              ]
               -> True
             _ -> False
 
@@ -146,15 +148,15 @@ spec = do
         $ \ (_notes, _warnings, errors) -> do
         assertBool (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [ (_, "because of call to 'requires_lock',\
-                  \ need permission 'locked' for variable 'p'\
-                  \ not present in context []")
+            [ (_, "because of call to 'lock',\
+                  \ denying disallowed permission 'locked' for variable 'p'\
+                  \ present in context [locked]")
               , (_, "because of call to 'denies_lock',\
-                  \ denying disallowed permission 'locked' for variable 'p'\
-                  \ present in context [locked]")
-              , (_, "because of call to 'lock',\
-                  \ denying disallowed permission 'locked' for variable 'p'\
-                  \ present in context [locked]")
+                    \ denying disallowed permission 'locked' for variable 'p'\
+                    \ present in context [locked]")
+              , (_, "because of call to 'requires_lock',\
+                    \ need permission 'locked' for variable 'p'\
+                    \ not present in context []")
               ]
               -> True
             _ -> False
@@ -189,9 +191,12 @@ wardTest args check = do
   case sequence parseResults of
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do
-      entriesRef <- newIORef []
-      flip runLogger entriesRef $ let
-        quiet = False
-        in Check.translationUnits translationUnits implicitPermissions quiet
-      entries <- readIORef entriesRef
+      entriesChan <- newChan
+      flip runLogger entriesChan $ do
+        let quiet = False
+        Check.translationUnits
+          (zip (Args.translationUnitPaths args) translationUnits)
+          implicitPermissions quiet
+        endLog
+      entries <- map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)
