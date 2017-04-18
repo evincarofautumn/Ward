@@ -5,7 +5,7 @@ module Main (main) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.System.GCC (newGCC)
@@ -26,7 +26,8 @@ main = do
   args <- Args.parse
 
   unless (null $ Args.configFilePaths args) $ do
-    putStrLn "Loading config files..."
+    when (Args.outputMode args == CompilerOutput) $ do
+      putStrLn "Loading config files..."
   _config <- do
     parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
     case sequence parsedConfigs of
@@ -35,7 +36,8 @@ main = do
         hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
         exitFailure
 
-  putStrLn "Preprocessing..."
+  when (Args.outputMode args == CompilerOutput) $ do
+    putStrLn "Preprocessing..."
   parseResults <- let
     temporaryDirectory = Nothing
     preprocessor = newGCC $ Args.preprocessorPath args
@@ -43,9 +45,13 @@ main = do
       $ parseCFile preprocessor temporaryDirectory
       $ Args.preprocessorFlags args
 
-  putStrLn "Checking..."
+  when (Args.outputMode args == CompilerOutput) $ do
+    putStrLn "Checking..."
   case sequence parseResults of
     Right translationUnits -> do
+
+      putStr $ formatHeader $ Args.outputMode args
+
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
@@ -57,21 +63,25 @@ main = do
           implicitPermissions
           (Args.quiet args)
         endLog
+
       let
         loop !warnings !errors = do
           message <- readChan entriesChan
           case message of
             Nothing -> return (warnings, errors)
             Just entry -> do
-              print entry
+              putStrLn $ format (Args.outputMode args) entry
               case entry of
                 Note{} -> loop warnings errors
                 Warning{} -> loop (warnings + 1) errors
                 Error{} -> loop warnings (errors + 1)
+
       (warnings, errors) <- loop (0 :: Int) (0 :: Int)
-      putStrLn $ concat
+
+      putStr $ formatFooter (Args.outputMode args) $ concat
         [ "Warnings: ", show warnings
         , ", Errors: ", show errors
         ]
+
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError

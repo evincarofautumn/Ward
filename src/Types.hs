@@ -4,6 +4,7 @@
 module Types where
 
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Monoid ((<>))
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
 import Language.C.Data.Ident (Ident(..))
@@ -16,12 +17,6 @@ data Entry
   = Note !NodeInfo !Text
   | Warning !NodeInfo !Text
   | Error !NodeInfo !Text
-
-instance Show Entry where
-  show = \ case
-    Note p t -> concat [posPrefix p, ": note: ", Text.unpack t]
-    Warning p t -> concat [posPrefix p, ": warning: ", Text.unpack t]
-    Error p t -> concat [posPrefix p, ": error: ", Text.unpack t]
 
 posPrefix :: NodeInfo -> String
 posPrefix (OnlyPos pos _) = concat
@@ -57,6 +52,47 @@ record True entry = Logger $ \ entries -> writeChan entries $ Just entry
 
 endLog :: Logger ()
 endLog = Logger $ \ entries -> writeChan entries Nothing
+
+data OutputMode
+  = CompilerOutput
+  | HtmlOutput
+  deriving (Eq)
+
+format :: OutputMode -> Entry -> String
+
+format CompilerOutput entry = case entry of
+  Note p t -> concat [posPrefix p, ": note: ", Text.unpack t]
+  Warning p t -> concat [posPrefix p, ": warning: ", Text.unpack t]
+  Error p t -> concat [posPrefix p, ": error: ", Text.unpack t]
+
+-- TODO: Convert position to URL for hyperlinked output.
+format HtmlOutput entry = case entry of
+  Note p t -> row "note" t
+  Warning p t -> row "warning" t
+  Error p t -> row "error" t
+  where
+    row category text = concat
+      ["<li class='", category, "'>", Text.unpack text, "</li>"]
+
+formatHeader :: OutputMode -> String
+formatHeader CompilerOutput = ""
+formatHeader HtmlOutput = "\
+  \<html>\n\
+  \<head>\n\
+  \<title>Ward Report</title>\n\
+  \</head>\n\
+  \<body>\n\
+  \<ul>\n\
+  \\&"
+
+formatFooter :: OutputMode -> String -> String
+formatFooter CompilerOutput extra = extra
+formatFooter HtmlOutput extra = "\
+  \</ul>\n\
+  \\&" <> extra <> "\n\
+  \</body>\n\
+  \</html>\n\
+  \\&"
 
 partitionEntries
   :: [Entry]

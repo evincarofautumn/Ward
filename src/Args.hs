@@ -12,6 +12,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>), mconcat)
 import Options.Applicative
 import Options.Applicative.Arrows (asA, runA)
+import Types
 
 data Args = Args
   { configFilePaths :: [FilePath]
@@ -22,10 +23,6 @@ data Args = Args
   , quiet :: Bool
   , translationUnitPaths :: [FilePath]
   }
-
-data OutputMode
-  = CompilerOutput
-  | HtmlOutput
 
 parse :: IO Args
 parse = execParser $ info (args <**> helper)
