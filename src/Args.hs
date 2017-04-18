@@ -1,4 +1,5 @@
 {-# LANGUAGE Arrows #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 
 module Args
@@ -6,19 +7,25 @@ module Args
   , parse
   ) where
 
-import Data.Monoid ((<>), mconcat)
 import Control.Arrow (returnA)
+import Data.Maybe (fromMaybe)
+import Data.Monoid ((<>), mconcat)
 import Options.Applicative
 import Options.Applicative.Arrows (asA, runA)
 
 data Args = Args
   { configFilePaths :: [FilePath]
   , implicitPermissions :: [String]
+  , outputMode :: !OutputMode
   , preprocessorFlags :: [String]
   , preprocessorPath :: FilePath
   , quiet :: Bool
   , translationUnitPaths :: [FilePath]
   }
+
+data OutputMode
+  = CompilerOutput
+  | HtmlOutput
 
 parse :: IO Args
 parse = execParser $ info (args <**> helper)
@@ -28,39 +35,67 @@ parse = execParser $ info (args <**> helper)
 
 args :: Parser Args
 args = runA $ proc () -> do
-  preprocessorPath <- asA $ argument str $ mconcat
+
+  preprocessorPath <- opt strArgument
     [ metavar "CPP"
     , help "Name of preprocessor."
     ] -< ()
-  configFilePaths <- asA $ many $ strOption $ mconcat
+
+  outputMode <- opt
+    (fmap (fromMaybe CompilerOutput)
+      . optional . option parseOutputMode)
+    [ long "mode"
+    , short 'M'
+    , metavar "html|compiler"
+    , help "Output mode style (default 'compiler')."
+    ] -< ()
+
+  configFilePaths <- opt (many . strOption)
     [ long "config"
     , short 'C'
     , metavar "FILE"
     , help "Read permission information from configuration FILE."
     ] -< ()
-  quiet <- asA $ flag False True $ mconcat
+
+  quiet <- opt (flag False True)
     [ long "quiet"
     , short 'q'
     , help "Suppress output except for errors."
     ] -< ()
-  implicitPermissions <- asA $ many $ strOption $ mconcat
+
+  implicitPermissions <- opt (many . strOption)
     [ long "grant"
     , short 'G'
     , metavar "PERM"
     , help "Implicitly grant PERM unless explicitly waived."
     ] -< ()
-  translationUnitPaths <- asA $ some $ argument str $ mconcat
+
+  translationUnitPaths <- opt (some . strArgument)
     [ metavar "PATH..."
     , help "Paths to C source files."
     ] -< ()
-  preprocessorFlags <- asA $ fmap (defaultPreprocessorFlags <>)
-    $ many $ strOption $ mconcat
+
+  preprocessorFlags <- opt
+    (fmap (defaultPreprocessorFlags <>) . many . strOption)
     [ long "preprocess"
     , short 'P'
     , metavar "FLAG"
     , help "Pass FLAG to preprocessor."
     ] -< ()
+
   returnA -< Args{..}
+
+  where opt f xs = asA $ f $ mconcat xs
+
+parseOutputMode :: ReadM OutputMode
+parseOutputMode = eitherReader $ \ case
+  "compiler" -> Right CompilerOutput
+  "html" -> Right HtmlOutput
+  mode -> Left $ concat
+    [ "Unknown output mode '"
+    , mode
+    , "'. Valid modes are 'compiler' and 'html'."
+    ]
 
 defaultPreprocessorFlags :: [String]
 defaultPreprocessorFlags = ["-D__WARD__"]
