@@ -166,6 +166,7 @@ defArgs = Args
   { Args.preprocessorPath = "gcc"
   , Args.translationUnitPaths = []
   , Args.implicitPermissions = []
+  , Args.outputMode = CompilerOutput
   , Args.preprocessorFlags = []
   , Args.configFilePaths = []
   , Args.quiet = False
