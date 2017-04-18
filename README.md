@@ -8,6 +8,8 @@ C programs tend to have a fair amount of global state, which can produce subtle 
 
 ## Building
 
+[![Build Status](https://travis-ci.org/evincarofautumn/Ward.svg?branch=master)](https://travis-ci.org/evincarofautumn/Ward)
+
 Ward is written in Haskell using the [`language-c`](https://hackage.haskell.org/package/language-c) package for parsing C99. You need [Stack](https://docs.haskellstack.org/en/stable/README/) to build it.
 
 ```
