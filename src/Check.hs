@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module Check
   ( translationUnits
@@ -7,12 +8,13 @@ module Check
 import Control.Monad (mzero, void)
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.List -- *
-import Data.Foldable (foldlM, foldrM, traverse_)
+import Data.Foldable (foldlM, foldrM, toList, traverse_)
 import Data.Generics (everywhere, mkT)
 import Data.Map (Map)
 import Data.Maybe (fromJust, fromMaybe)
 import Data.Monoid -- *
 import Data.Set (Set)
+import Data.Vector (Vector)
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo)
 import Language.C.Pretty (pretty)
@@ -23,6 +25,7 @@ import Types
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 
 {-# ANN module "HLint: ignore Redundant do" #-}
 
@@ -70,20 +73,20 @@ translationUnits tus implicitPermissions quiet = do
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
 joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _)
   = CTranslUnit
-    (concat
+    (Vector.concat
       [ prefixStatics path externalDeclarations
       | (path, CTranslUnit externalDeclarations _) <- tus
       ])
     firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
-prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
-prefixStatics path decls = map prefixOne decls
+prefixStatics :: (Foldable f, Functor f) => FilePath -> f CExtDecl -> f CExtDecl
+prefixStatics path decls = fmap prefixOne decls
   where
     statics =
       [ name
-      | CFDefExt (CFunDef specifiers (CDeclr (Just (Ident name _ _)) _ _ _ _) _ _ _) <- decls
-      , CStatic _ : _ <- [[spec | CStorageSpec spec <- specifiers]]
+      | CFDefExt (CFunDef specifiers (CDeclr (Just (Ident name _ _)) _ _ _ _) _ _ _) <- toList decls
+      , CStatic _ : _ <- [[spec | CStorageSpec spec <- toList specifiers]]
       ]
     prefixOne decl = case decl of
       CFDefExt (CFunDef specifiers
@@ -123,12 +126,12 @@ checkFunctions global quiet
       let
         parameterNames =
           [ Just parameterName
-          | CDecl _ parameterDeclarations _ <- parameters
+          | CDecl _ parameterDeclarations _ <- toList parameters
           , (Just (CDeclr (Just (Ident parameterName _ _)) _ _ _ _), _, _)
-            <- parameterDeclarations
+            <- toList parameterDeclarations
           ]
       extractedActions <- extractPermissionActions
-        [attr | CTypeQual (CAttrQual attr) <- specifiers]
+        [attr | CTypeQual (CAttrQual attr) <- toList specifiers]
       let
         permissionActions = fromMaybe mempty
           (Map.lookup ident $ globalPermissionActions global)
@@ -254,7 +257,7 @@ checkFunctions global quiet
       CBlockStmt statement -> checkStatement local statement
       CBlockDecl (CDecl _specifiers declarations _)
         -> foldlM checkInitializer local
-          [initializer | (_, Just initializer, _) <- declarations]
+          [initializer | (_, Just initializer, _) <- toList declarations]
       CBlockDecl (CStaticAssert _ _ _) -> return local
       -- GNU nested function
       CNestedFunDef{} -> return local
@@ -327,7 +330,7 @@ checkFunctions global quiet
             [ case argument of
               CVar (Ident argumentName _ _) _ -> Just argumentName
               _ -> Nothing
-            | argument <- arguments
+            | argument <- toList arguments
             ]
         local' <- checkExpression local function
         local'' <- foldlM checkExpression local' arguments
@@ -629,7 +632,7 @@ insertTopLevelElement implicitPermissions element global = case element of
   CDeclExt (CDecl specifiers fullDeclarators _) -> do
     declaratorPermissions <- extractDeclaratorPermissionActions fullDeclarators
     specifierPermissions <- extractPermissionActions
-      [attr | CTypeQual (CAttrQual attr) <- specifiers]
+      [attr | CTypeQual (CAttrQual attr) <- toList specifiers]
     let
       identPermissions = declaratorPermissions ++
         [ (ident, specifierPermissions)
@@ -645,7 +648,7 @@ insertTopLevelElement implicitPermissions element global = case element of
   CFDefExt definition@(CFunDef specifiers
     (CDeclr (Just ident) _ _ _ _) _parameters _body _) -> do
       specifierPermissions <- extractPermissionActions
-        [attr | CTypeQual (CAttrQual attr) <- specifiers]
+        [attr | CTypeQual (CAttrQual attr) <- toList specifiers]
       return global
         { globalPermissionActions = mapInsertWithOrDefault combine
           ident specifierPermissions $ globalPermissionActions global
@@ -682,7 +685,8 @@ mapInsertWithOrDefault combine key new m
   = Map.insert key (combine new (Map.lookup key m)) m
 
 extractDeclaratorPermissionActions
-  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)]
+  :: (Foldable f)
+  => f (Maybe CDeclr, Maybe CInit, Maybe CExpr)
   -> Logger [(Ident, Set PermissionAction)]
 extractDeclaratorPermissionActions = foldrM go []
   where
@@ -694,16 +698,16 @@ extractDeclaratorPermissionActions = foldrM go []
         else (ident, permissionActions) : acc
     go _ acc = return acc
 
-extractPermissionActions :: [CAttr] -> Logger (Set PermissionAction)
+extractPermissionActions :: (Foldable f) => f CAttr -> Logger (Set PermissionAction)
 extractPermissionActions attributes = fmap Set.fromList . runListT $ do
-  CAttr (Ident "permission" _ _) expressions _ <- select attributes
-  CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
-  permissionSpec <- select permissions
+  CAttr (Ident "permission" _ _) expressions _ <- select $ toList attributes
+  CCall (CVar (Ident actionName _ _) _) permissions pos <- select $ toList expressions
+  permissionSpec <- select $ toList permissions
   (permission, mSubject) <- case permissionSpec of
     CVar (Ident permission _ _) _ -> return (permission, Nothing)
     CCall
       (CVar (Ident permission _ _) _)
-      [CConst (CIntConst (CInteger subject _ _) _)]
+      (toList -> [CConst (CIntConst (CInteger subject _ _) _)])
       _
       -> return (permission, Just (fromInteger subject))
     other -> do

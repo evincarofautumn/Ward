@@ -1,6 +1,7 @@
 resolver: nightly-2017-03-15
 packages:
 - '.'
+- ../language-c
 extra-deps: []
 flags: {}
 extra-package-dbs: []
