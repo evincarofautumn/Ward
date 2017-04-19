@@ -37,6 +37,7 @@ test-suite test
   main-is:             Spec.hs
   other-modules:       Args
                      , Check
+                     , Config
                      , Types
   ghc-options:         -Wall
   build-depends:       base
