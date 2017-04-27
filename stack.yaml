@@ -1,6 +1,9 @@
 resolver: nightly-2017-03-15
 packages:
 - '.'
+- location:
+    git: git@github.com:evincarofautumn/language-c.git
+    commit: 8ac1bcfb19364353e26e267f826f1eb08e9c2ff0
 extra-deps: []
 flags: {}
 extra-package-dbs: []
