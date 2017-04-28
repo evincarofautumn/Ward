@@ -13,7 +13,7 @@ import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import Types
 import qualified Args
-import qualified Check
+import qualified Check.Permissions as Check
 import qualified Config
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -56,12 +56,8 @@ main = do
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
           implicitPermissions = Set.fromList
-            $ map (Permission . Text.pack)
+            $ map (PermissionName . Text.pack)
             $ Args.implicitPermissions args
-        Check.translationUnits
-          (zip (Args.translationUnitPaths args) translationUnits)
-          implicitPermissions
-          (Args.quiet args)
         endLog
 
       let

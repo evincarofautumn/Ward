@@ -1,17 +1,16 @@
 module Config
   ( Config(..)
-  , Restriction(..)
   , fromFile
   , fromSource
   , query
   ) where
 
+import Check.Permissions (Expression(..), PermissionPresence(..))
 import Control.Monad (void)
 import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Monoid -- *
 import Data.Text (Text)
-import GHC.Exts (IsString(..))
 import Text.Parsec
 import Text.Parsec.String
 import Types
@@ -40,28 +39,15 @@ import qualified Data.Text as Text
 --     // Just a regular old comment.
 --
 
-newtype Config = Config (Map Permission [(Restriction, Maybe Description)])
+newtype Config = Config (Map PermissionName [(Expression, Maybe Description)])
   deriving (Eq, Show)
 
 instance Monoid Config where
   mempty = Config mempty
   mappend (Config a) (Config b) = Config $ Map.unionWith (<>) a b
 
-query :: Permission -> Config -> Maybe [(Restriction, Maybe Description)]
+query :: PermissionName -> Config -> Maybe [(Expression, Maybe Description)]
 query p (Config c) = Map.lookup p c
-
-data Restriction
-  = !Restriction :& !Restriction
-  | !Restriction :| !Restriction
-  | Not !Restriction
-  | Literal !Permission
-  deriving (Eq, Show)
-
-instance IsString Restriction where
-  fromString = Literal . fromString
-
-infixr 3 :&
-infixr 2 :|
 
 type Description = Text
 
@@ -75,22 +61,22 @@ parser :: Parser Config
 parser = Config . Map.fromListWith (<>)
   <$> between silence eof (many declaration)
 
-declaration :: Parser (Permission, [(Restriction, Maybe Description)])
+declaration :: Parser (PermissionName, [(Expression, Maybe Description)])
 declaration = (,)
   <$> (permission <* silence)
   <*> (toList <$> optionMaybe restriction) <* operator ';'
 
-restriction :: Parser (Restriction, Maybe Description)
+restriction :: Parser (Expression, Maybe Description)
 restriction = lexeme (string "->")
   *> ((,) <$> expression <*> optionMaybe description)
 
-expression :: Parser Restriction
+expression :: Parser Expression
 expression = orExpression
   where
-    orExpression = foldr1 (:|) <$> andExpression `sepBy1` operator '|'
-    andExpression = foldr1 (:&) <$> term `sepBy1` operator '&'
+    orExpression = foldr1 Or <$> andExpression `sepBy1` operator '|'
+    andExpression = foldr1 And <$> term `sepBy1` operator '&'
     term = choice
-      [ Literal <$> permission
+      [ Context . Has <$> permission
       , Not <$> (operator '!' *> term)
       , parenthesized expression
       ]
@@ -106,8 +92,8 @@ description = fmap Text.pack $ lexeme $ quoted $ many $ character <|> escape
       ]
     quoted = between (char '"') (char '"')
 
-permission :: Parser Permission
-permission = Permission . Text.pack <$> lexeme ((:) <$> first <*> many rest)
+permission :: Parser PermissionName
+permission = PermissionName . Text.pack <$> lexeme ((:) <$> first <*> many rest)
   where
     first = letter <|> char '_'
     rest = alphaNum <|> char '_'
