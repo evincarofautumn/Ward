@@ -5,7 +5,7 @@ module Main
   ) where
 
 import Args (Args(Args))
-import Config (Config(Config), Restriction(..))
+import Config (Config(Config))
 import Control.Concurrent.Chan (getChanContents, newChan)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
@@ -17,8 +17,8 @@ import Test.HUnit hiding (errors)
 import Test.Hspec
 import Text.Parsec (ParseError)
 import Types
+import Types
 import qualified Args
-import qualified Check
 import qualified Config
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -77,7 +77,7 @@ spec = do
       configTest
         "p1 -> p2 & p3 | p4 & !p5 | !(p6 & p7);"
         $ Right $ Config $ Map.singleton "p1"
-          [ ("p2" :& "p3" :| "p4" :& Not "p5" :| Not ("p6" :& "p7"), Nothing)
+          [ ("p2" `And` "p3" `Or` "p4" `And` Not "p5" `Or` Not ("p6" `And` "p7"), Nothing)
           ]
 
   describe "with simple errors" $ do
@@ -187,7 +187,7 @@ wardTest args check = do
     $ Args.preprocessorFlags args
   let
     implicitPermissions = Set.fromList
-      $ map (Permission . Text.pack)
+      $ map (PermissionName . Text.pack)
       $ Args.implicitPermissions args
   case sequence parseResults of
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
@@ -195,9 +195,6 @@ wardTest args check = do
       entriesChan <- newChan
       flip runLogger entriesChan $ do
         let quiet = False
-        Check.translationUnits
-          (zip (Args.translationUnitPaths args) translationUnits)
-          implicitPermissions quiet
         endLog
       entries <- map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)

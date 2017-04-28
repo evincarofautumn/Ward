@@ -16,12 +16,15 @@ executable ward
   hs-source-dirs:      src
   main-is:             Main.hs
   other-modules:       Args
-                     , Check
+                     , Check.Permissions
                      , Config
+                     , Graph
                      , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
+                     , array
                      , containers
+                     , hashable
                      , language-c >= 0.6
                      , optparse-applicative
                      , parsec
@@ -29,6 +32,8 @@ executable ward
                      , syb
                      , text
                      , transformers
+                     , unordered-containers
+                     , vector
   default-language:    Haskell2010
 
 test-suite test
@@ -36,12 +41,15 @@ test-suite test
   hs-source-dirs:      src, test
   main-is:             Spec.hs
   other-modules:       Args
-                     , Check
+                     , Check.Permissions
+                     , Config
                      , Types
   ghc-options:         -Wall
   build-depends:       base
-                     , containers
                      , HUnit
+                     , array
+                     , containers
+                     , hashable
                      , hspec
                      , language-c
                      , optparse-applicative
@@ -50,6 +58,8 @@ test-suite test
                      , syb
                      , text
                      , transformers
+                     , unordered-containers
+                     , vector
   default-language:    Haskell2010
 
 source-repository head

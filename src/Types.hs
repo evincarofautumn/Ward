@@ -1,17 +1,20 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Types where
 
+import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Hashable (Hashable(..))
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
+import GHC.Generics (Generic)
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import qualified Data.Text as Text
-import Control.Concurrent.Chan (Chan, writeChan)
 
 data Entry
   = Note !NodeInfo !Text
@@ -105,38 +108,25 @@ partitionEntries = go mempty
       Error a b : rest -> go (ns, ws, (a, b) : es) rest
       [] -> (reverse ns, reverse ws, reverse es)
 
--- | An action to take on the context, given the permission from a
--- 'PermissionAction'.
-data Action
-
-  -- | The context must contain the given permission. This action does not
-  -- change the context.
-  = Need
-
-  -- | The context must *not* contain the given permission. This action does not
-  -- change the context.
-  | Deny
-
-  -- | After this action, the given permission is added to the context. The
-  -- context may contain the permission already.
-  | Grant
-
-  -- | The context must contain the given permission. After this action, it will
-  -- be removed from the context.
-  | Revoke
-
-  -- | The context may contain the given permission. During this function, it
-  -- will be removed from the context. This can be used to waive permissions
-  -- implicitly granted by "--grant".
-  | Waive
-  deriving (Eq, Ord)
-
-newtype Permission = Permission Text
-  deriving (Eq, IsString, Ord)
+newtype PermissionName = PermissionName Text
+  deriving (Eq, Hashable, IsString, Ord)
 
 -- | A pair of an action and a permission, such as @grant(foo)@.
-data PermissionAction = PermissionAction !Action !(Maybe Int) !Permission
-  deriving (Eq, Ord)
+data PermissionAction
+  = Needs !PermissionName
+  | Grants !PermissionName
+  | Revokes !PermissionName
+  deriving (Eq, Generic, Ord)
+
+data PermissionPresence
+  = Has !PermissionName
+  | Lacks !PermissionName
+  deriving (Eq, Generic, Ord)
+
+presencePermission :: PermissionPresence -> PermissionName
+presencePermission = \ case
+  Has p -> p
+  Lacks p -> p
 
 -- | Why a particular permission action is being applied.
 data Reason
@@ -147,24 +137,59 @@ reasonPos :: Reason -> NodeInfo
 reasonPos (NoReason pos) = pos
 reasonPos (BecauseCall (Ident _ _ pos)) = pos
 
-instance Show Permission where
-  show (Permission name) = Text.unpack name
+
+data Restriction = !PermissionPresence `Implies` Expression
+
+data Expression
+  = Context !PermissionPresence
+  | !Expression `And` !Expression
+  | !Expression `Or` !Expression
+  | Not !Expression
+  deriving (Eq)
+
+infixr 3 `And`
+infixr 2 `Or`
+infixr 1 `Implies`
+
+instance IsString Expression where
+  fromString = Context . Has . fromString
+
+instance Show Restriction where
+  show (p `Implies` e) = concat [show p, " -> ", show e]
+
+instance Show Expression where
+  showsPrec p = \ case
+    Context presence -> shows presence
+    a `And` b -> showParen (p > andPrec)
+      $ showsPrec andPrec a . showString " & " . showsPrec andPrec b
+    a `Or` b -> showParen (p > orPrec)
+      $ showsPrec orPrec a . showString " & " . showsPrec orPrec b
+    Not a -> showParen (p > notPrec)
+      $ showString "!" . showsPrec notPrec a
+    where
+    andPrec = 3
+    orPrec = 2
+    notPrec = 10
+
+instance Show PermissionName where
+  show (PermissionName name) = Text.unpack name
 
 instance Show PermissionAction where
-  show (PermissionAction action (Just subject) permission)
-    = concat [show action, "(", show permission, "(", show subject, "))"]
-  show (PermissionAction action Nothing permission)
-    = concat [show action, "(", show permission, ")"]
+  show = \ case
+    Needs p -> concat ["needs(", show p, ")"]
+    Grants p -> concat ["grants(", show p, ")"]
+    Revokes p -> concat ["revokes(", show p, ")"]
+
+instance Hashable PermissionAction
 
 instance Show Reason where
   show = \ case
     NoReason _ -> "unspecified reason"
     BecauseCall (Ident name _ _) -> concat ["call to '", name, "'"]
 
-instance Show Action where
-  show action = case action of
-    Need -> "need"
-    Deny -> "deny"
-    Grant -> "grant"
-    Revoke -> "revoke"
-    Waive -> "waive"
+instance Show PermissionPresence where
+  show = \ case
+    Has p -> concat ["has(", show p, ")"]
+    Lacks p -> concat ["lacks(", show p, ")"]
+
+instance Hashable PermissionPresence
