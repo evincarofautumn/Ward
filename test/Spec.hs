@@ -5,7 +5,7 @@ module Main
   ) where
 
 import Args (Args(Args))
-import Config (Config(Config))
+import Config (Config(Config), Declaration(Declaration))
 import Control.Concurrent.Chan (getChanContents, newChan)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
@@ -16,7 +16,6 @@ import Language.C.System.GCC (newGCC)
 import Test.HUnit hiding (errors)
 import Test.Hspec
 import Text.Parsec (ParseError)
-import Types
 import Types
 import qualified Args
 import qualified Config
@@ -51,25 +50,27 @@ spec = do
     it "accepts permission declaration" $ do
       configTest
         "perm1;"
-        $ Right $ Config $ Map.singleton "perm1" []
+        $ Right $ Config $ Map.singleton "perm1" mempty
 
     it "accepts multiple permission declarations" $ do
       configTest
         "perm1; perm2;"
         $ Right $ Config $ Map.fromList
-          [ ("perm1", [])
-          , ("perm2", [])
+          [ ("perm1", mempty)
+          , ("perm2", mempty)
           ]
 
     it "accepts relationship declaration" $ do
       configTest
         "perm1 -> perm2;"
-        $ Right $ Config $ Map.singleton "perm1" [("perm2", Nothing)]
+        $ Right $ Config $ Map.singleton "perm1"
+        $ Declaration False [("perm2", Nothing)]
 
     it "accepts relationship declaration with description" $ do
       configTest
         "perm1 -> perm2 \"perm1 implies perm2\";"
         $ Right $ Config $ Map.singleton "perm1"
+        $ Declaration False
           [ ("perm2", Just "perm1 implies perm2")
           ]
 
@@ -77,6 +78,7 @@ spec = do
       configTest
         "p1 -> p2 & p3 | p4 & !p5 | !(p6 & p7);"
         $ Right $ Config $ Map.singleton "p1"
+        $ Declaration False
           [ ("p2" `And` "p3" `Or` "p4" `And` Not "p5" `Or` Not ("p6" `And` "p7"), Nothing)
           ]
 

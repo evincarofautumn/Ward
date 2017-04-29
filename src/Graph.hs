@@ -1,20 +1,15 @@
 {-# LANGUAGE LambdaCase #-}
 
 module Graph
-  (
+  ( fromTranslationUnits
   ) where
 
 import Data.Generics
-import Data.HashMap.Strict (HashMap)
 import Data.Map (Map)
 import Data.Maybe (mapMaybe)
 import Data.Monoid ((<>))
 import Language.C.Data.Ident (Ident(..))
-import Language.C.Data.Node (NodeInfo)
-import Language.C.Pretty (pretty)
 import Language.C.Syntax.AST -- *
-import Language.C.Syntax.Constants -- *
-import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map as Map
 
 type NameMap = Map Ident (Maybe CFunDef)
@@ -22,8 +17,11 @@ type NameMap = Map Ident (Maybe CFunDef)
 type CallMap = Map Ident [Ident]
 
 -- | Builds a call graph from a set of translation units.
-fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> NameMap
-fromTranslationUnits _implicitPermissions = nameMapFromTranslationUnit _implicitPermissions . joinTranslationUnits
+fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> CallMap
+fromTranslationUnits _implicitPermissions
+  = callMapFromNameMap
+  . nameMapFromTranslationUnit _implicitPermissions
+  . joinTranslationUnits
 
 -- | Joins multiple translation units into one.
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
@@ -83,7 +81,7 @@ nameMapFromTranslationUnit _implicitPermissions
   where
     fromDecl = \ case
       -- For an external declaration, record an empty body.
-      CDeclExt (CDecl specifiers fullDeclarators _) -> let
+      CDeclExt (CDecl _specifiers fullDeclarators _) -> let
         names =
           [ ident
           -- TODO: Do something with derived declarators?
@@ -92,7 +90,7 @@ nameMapFromTranslationUnit _implicitPermissions
         in Map.fromList $ zip names $ repeat Nothing
 
       -- For a function definition, record the function body in the context.
-      CFDefExt definition@(CFunDef specifiers
+      CFDefExt definition@(CFunDef _specifiers
         (CDeclr (Just ident) _ _ _ _) _parameters _body _)
           -> Map.singleton ident (Just definition)
 

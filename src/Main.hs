@@ -3,20 +3,26 @@
 
 module Main (main) where
 
+import Check.Permissions (Function(..))
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless, when)
+import Control.Monad.IO.Class (liftIO)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
+import Language.C.Data.Ident (Ident(Ident))
 import Language.C.System.GCC (newGCC)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
 import Types
 import qualified Args
-import qualified Check.Permissions as Check
+import qualified Check.Permissions as Permissions
 import qualified Config
+import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
+import qualified Graph
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -58,6 +64,20 @@ main = do
           implicitPermissions = Set.fromList
             $ map (PermissionName . Text.pack)
             $ Args.implicitPermissions args
+          callMap = Graph.fromTranslationUnits implicitPermissions
+            (zip (Args.translationUnitPaths args) translationUnits)
+          functions = map
+            (\ (name, calls) -> Function
+              { functionName = nameFromIdent name
+              , functionPermissions = mempty  -- TODO: Get from config.
+              , functionCalls = Vector.fromList
+                $ map (Vector.singleton . nameFromIdent) calls
+              })
+            $ Map.toList callMap
+            where
+              nameFromIdent (Ident name _ _) = Text.pack name
+          restrictions = []
+        liftIO $ Permissions.process functions restrictions
         endLog
 
       let

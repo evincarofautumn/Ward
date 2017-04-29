@@ -1,13 +1,12 @@
 module Config
   ( Config(..)
+  , Declaration(..)
   , fromFile
   , fromSource
   , query
   ) where
 
-import Check.Permissions (Expression(..), PermissionPresence(..))
 import Control.Monad (void)
-import Data.Foldable (toList)
 import Data.Map (Map)
 import Data.Monoid -- *
 import Data.Text (Text)
@@ -17,36 +16,40 @@ import Types
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 
--- A config consists of a series of permission declarations:
+-- Grammar of config files:
 --
---     permission_name;
---
--- These may include Boolean expressions called "restrictions" that specify
--- constraints on a permission using the OR '|', AND '&', and NOT '!' operators.
---
---     explicit_permission -> implicit_permission;
---     running -> !initializing & !shutting_down;
---     access_globals -> globals_locked | single_threaded;
---
--- A restriction may include a quoted description, to improve error reporting.
---
---     access_globals -> globals_locked | single_threaded
---       "globals must be synchronized, except in single-threaded mode";
---
--- Config files may include comments, which begin with '//' and continue to the
--- end of the line.
---
---     // Just a regular old comment.
---
+-- <config>          ::= <ws> <declaration>*
+-- <declaration>     ::= <name> <modifier>* <description>? <restriction>* ";" <ws>
+-- <name>            ::= /[A-Za-z_][0-9A-Za-z_]*/ <ws>
+-- <modifier>        ::= "implicit" <ws>
+-- <description>     ::= /"([^"]|\\[\\"])*"/ <ws>
+-- <restriction>     ::= "->" <ws> <expression> <description>?
+-- <expression>      ::= <or-expression>
+-- <or-expression>   ::= <and-expression> ("|" <ws> <and-expression>)*
+-- <and-expression>  ::= <term> ("&" <ws> <term>)*
+-- <term>            ::= <name> | "!" <ws> <term> | "(" <ws> <expression> ")" <ws>
+-- <ws>              ::= /([\t\n\r ]|//[^\n]*$)*/
 
-newtype Config = Config (Map PermissionName [(Expression, Maybe Description)])
+data Declaration = Declaration
+  { declImplicit :: !Bool
+  , declRestrictions :: [(Expression, Maybe Description)]
+  } deriving (Eq, Show)
+
+instance Monoid Declaration where
+  mempty = Declaration False mempty
+  mappend a b = Declaration
+    { declImplicit = declImplicit a || declImplicit b
+    , declRestrictions = declRestrictions a <> declRestrictions b
+    }
+
+newtype Config = Config (Map PermissionName Declaration)
   deriving (Eq, Show)
 
 instance Monoid Config where
   mempty = Config mempty
   mappend (Config a) (Config b) = Config $ Map.unionWith (<>) a b
 
-query :: PermissionName -> Config -> Maybe [(Expression, Maybe Description)]
+query :: PermissionName -> Config -> Maybe Declaration
 query p (Config c) = Map.lookup p c
 
 type Description = Text
@@ -61,10 +64,12 @@ parser :: Parser Config
 parser = Config . Map.fromListWith (<>)
   <$> between silence eof (many declaration)
 
-declaration :: Parser (PermissionName, [(Expression, Maybe Description)])
+declaration :: Parser (PermissionName, Declaration)
 declaration = (,)
   <$> (permission <* silence)
-  <*> (toList <$> optionMaybe restriction) <* operator ';'
+  <*> (Declaration
+    <$> option False (True <$ lexeme (string "implicit"))
+    <*> many restriction <* operator ';')
 
 restriction :: Parser (Expression, Maybe Description)
 restriction = lexeme (string "->")
