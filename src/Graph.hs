@@ -4,17 +4,24 @@ module Graph
   ( fromTranslationUnits
   ) where
 
+import Control.Monad (mzero)
+import Control.Monad.Trans.List (ListT(ListT), runListT)
+import Data.Foldable (foldrM)
+import Data.Functor.Identity (runIdentity)
 import Data.Generics
 import Data.Map (Map)
 import Data.Maybe (mapMaybe)
 import Data.Monoid ((<>))
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Syntax.AST -- *
+import Types
+import qualified Data.HashSet as HashSet
 import qualified Data.Map as Map
+import qualified Data.Text as Text
 
-type NameMap = Map Ident (Maybe CFunDef)
+type NameMap = Map Ident (Maybe CFunDef, PermissionActionSet)
 
-type CallMap = Map Ident [Ident]
+type CallMap = Map Ident ([Ident], PermissionActionSet)
 
 -- | Builds a call graph from a set of translation units.
 fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> CallMap
@@ -81,32 +88,37 @@ nameMapFromTranslationUnit _implicitPermissions
   where
     fromDecl = \ case
       -- For an external declaration, record an empty body.
-      CDeclExt (CDecl _specifiers fullDeclarators _) -> let
-        names =
-          [ ident
-          -- TODO: Do something with derived declarators?
-          | (Just (CDeclr (Just ident) _derived _ _ _), _, _) <- fullDeclarators
+      CDeclExt (CDecl specifiers fullDeclarators _) -> let
+        specifierPermissions = extractPermissionActions
+          [attr | CTypeQual (CAttrQual attr) <- specifiers]
+        -- TODO: Do something with derived declarators?
+        declaratorPermissions = extractDeclaratorPermissionActions fullDeclarators
+        identPermissions = declaratorPermissions ++
+          [ (ident, specifierPermissions)
+          | ident <- map fst declaratorPermissions
           ]
-        in Map.fromList $ zip names $ repeat Nothing
+        in Map.map ((,) Nothing) $ Map.fromListWith (<>) identPermissions
 
       -- For a function definition, record the function body in the context.
-      CFDefExt definition@(CFunDef _specifiers
-        (CDeclr (Just ident) _ _ _ _) _parameters _body _)
-          -> Map.singleton ident (Just definition)
+      CFDefExt definition@(CFunDef specifiers
+        (CDeclr (Just ident) _ _ _ _) _parameters _body _) -> let
+          specifierPermissions = extractPermissionActions
+            [attr | CTypeQual (CAttrQual attr) <- specifiers]
+          in Map.singleton ident (Just definition, specifierPermissions)
 
       _ -> mempty
 
 ----
 
 callMapFromNameMap :: NameMap -> CallMap
-callMapFromNameMap = Map.fromList . mapMaybe fromEntry . Map.toList
+callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
   where
-    fromEntry (name, mDef) = do
-      def <- fromFunction <$> mDef
-      Just (name, def)
+    fromEntry (name, (mDef, permissions)) = let
+      calls = maybe [] fromFunction mDef
+      in (name, (calls, permissions))
 
     fromFunction :: CFunDef -> [Ident]
-    fromFunction (CFunDef _specifiers
+    fromFunction (CFunDef specifiers
       (CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
       parameters body _)
       = everything (<>) (mkQ mempty fromStatement) body
@@ -118,6 +130,9 @@ callMapFromNameMap = Map.fromList . mapMaybe fromEntry . Map.toList
           , (Just (CDeclr (Just (Ident parameterName _ _)) _ _ _ _), _, _)
             <- parameterDeclarations
           ]
+        specifierPermissions = extractPermissionActions
+          [attr | CTypeQual (CAttrQual attr) <- specifiers]
+
     fromFunction _ = mempty
 
     fromStatement :: CStat -> [Ident]
@@ -145,3 +160,46 @@ callMapFromNameMap = Map.fromList . mapMaybe fromEntry . Map.toList
       CCall (CVar ident _) arguments callPos -> [ident]
       _ -> []
 
+extractPermissionActions :: [CAttr] -> PermissionActionSet
+extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
+  CAttr (Ident "permission" _ _) expressions _ <- select attributes
+  CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
+  permissionSpec <- select permissions
+  (permission, mSubject) <- case permissionSpec of
+    CVar (Ident permission _ _) _ -> return (permission, Nothing)
+    {-
+    -- FIXME: Allow subjects.
+    CCall
+      (CVar (Ident permission _ _) _)
+      [CConst (CIntConst (CInteger subject _ _) _)]
+      _
+      -> return (permission, Just (fromInteger subject))
+    -}
+    -- FIXME: Report malformed permission specifier.
+    other -> mzero
+  action <- case actionName of
+    "needs" -> return Needs
+    -- "deny" -> return Deny
+    "grants" -> return Grants
+    "revokes" -> return Revokes
+    -- "waive" -> return Waive
+    -- FIXME: Report unknown permission action.
+    _ -> mzero
+  -- FIXME: Use mSubject
+  return $ action $ PermissionName $ Text.pack permission
+
+extractDeclaratorPermissionActions
+  :: [(Maybe CDeclr, Maybe CInit, Maybe CExpr)]
+  -> [(Ident, PermissionActionSet)]
+extractDeclaratorPermissionActions = runIdentity . foldrM go []
+  where
+    -- TODO: Do something with derived declarators?
+    go (Just (CDeclr (Just ident) _derived _ attributes _), _, _) acc = do
+      let permissionActions = extractPermissionActions attributes
+      return $ if HashSet.null permissionActions
+        then acc
+        else (ident, permissionActions) : acc
+    go _ acc = return acc
+
+select :: (Monad m) => [a] -> ListT m a
+select = ListT . return

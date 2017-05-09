@@ -6,6 +6,7 @@ module Types where
 
 import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
 import Data.Monoid ((<>))
 import Data.Text (Text)
@@ -118,10 +119,14 @@ data PermissionAction
   | Revokes !PermissionName
   deriving (Eq, Generic, Ord)
 
+type PermissionActionSet = HashSet PermissionAction
+
 data PermissionPresence
   = Has !PermissionName
   | Lacks !PermissionName
   deriving (Eq, Generic, Ord)
+
+type PermissionPresenceSet = HashSet PermissionPresence
 
 presencePermission :: PermissionPresence -> PermissionName
 presencePermission = \ case

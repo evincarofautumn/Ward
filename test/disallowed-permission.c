@@ -1,5 +1,5 @@
-int foo(void) __attribute__ ((permission (deny (baz))));
-int bar(void) __attribute__ ((permission (need (baz))));
+int foo(void) __attribute__ ((permission (denies (baz))));
+int bar(void) __attribute__ ((permission (needs (baz))));
 
 int foo (void)
 {
