@@ -67,9 +67,9 @@ main = do
           callMap = Graph.fromTranslationUnits implicitPermissions
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
-            (\ (name, calls) -> Function
+            (\ (name, (calls, permissions)) -> Function
               { functionName = nameFromIdent name
-              , functionPermissions = mempty  -- TODO: Get from config.
+              , functionPermissions = permissions
               , functionCalls = Vector.fromList
                 $ map (Vector.singleton . nameFromIdent) calls
               })
