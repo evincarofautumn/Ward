@@ -9,8 +9,6 @@ import Control.Monad.Trans.List (ListT(ListT), runListT)
 import Data.Foldable (foldrM)
 import Data.Functor.Identity (runIdentity)
 import Data.Generics
-import Data.Map (Map)
-import Data.Maybe (mapMaybe)
 import Data.Monoid ((<>))
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Syntax.AST -- *
@@ -18,10 +16,6 @@ import Types
 import qualified Data.HashSet as HashSet
 import qualified Data.Map as Map
 import qualified Data.Text as Text
-
-type NameMap = Map Ident (Maybe CFunDef, PermissionActionSet)
-
-type CallMap = Map Ident ([Ident], PermissionActionSet)
 
 -- | Builds a call graph from a set of translation units.
 fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> CallMap
@@ -110,18 +104,29 @@ nameMapFromTranslationUnit _implicitPermissions
 
 ----
 
+simplify :: CallTree a -> CallTree a
+simplify (Sequence a b) = case (simplify a, simplify b) of
+  (a', Nop) -> a'
+  (Nop, b') -> b'
+  (a', b') -> Sequence a' b'
+simplify (Choice a b) = case (simplify a, simplify b) of
+  (a', Nop) -> a'
+  (Nop, b') -> b'
+  (a', b') -> Choice a' b'
+simplify leaf = leaf
+
 callMapFromNameMap :: NameMap -> CallMap
 callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
   where
     fromEntry (name, (mDef, permissions)) = let
-      calls = maybe [] fromFunction mDef
-      in (name, (calls, permissions))
+      calls = maybe Nop fromFunction mDef
+      in (name, (simplify calls, permissions))
 
-    fromFunction :: CFunDef -> [Ident]
+    fromFunction :: CFunDef -> CallTree Ident
     fromFunction (CFunDef specifiers
       (CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
       parameters body _)
-      = everything (<>) (mkQ mempty fromStatement) body
+      = everything Sequence (mkQ Nop fromStatement) body
       where
         -- TODO: Do something with parameter names?
         parameterNames =
@@ -130,35 +135,38 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
           , (Just (CDeclr (Just (Ident parameterName _ _)) _ _ _ _), _, _)
             <- parameterDeclarations
           ]
-        specifierPermissions = extractPermissionActions
-          [attr | CTypeQual (CAttrQual attr) <- specifiers]
 
-    fromFunction _ = mempty
+    fromFunction _ = Nop
 
-    fromStatement :: CStat -> [Ident]
-    fromStatement = everything (<>) (mkQ mempty fromExpression)
-      -- FIXME: Should be if (f()) { g(); } else { h(); } => [[f], [g, h]]
-      -- CIf condition true mFalse _
+    fromStatement :: CStat -> CallTree Ident
+    fromStatement = \ case
       -- FIXME: Also CSwitch, CWhile, CFor?
+      CIf condition true mFalse _ -> Sequence
+        (everything Sequence (mkQ Nop fromExpression) condition)
+        (Choice
+          (everything Sequence (mkQ Nop fromExpression) true)
+          (everything Sequence (mkQ Nop fromExpression) mFalse))
+      statement -> everything Sequence (mkQ Nop fromExpression) statement
 
-    -- This is somewhat approximate, because it doesn't treat conditional
-    -- statements or expressions differently from ordinary sequential
-    -- calls. Ideally it should collect calls in the order they would be called,
-    -- so that the branches of conditionals can be unified rather than checked
-    -- in sequence. However, in general this would require building a call
-    -- *tree* rather than a call *list* for each function, which is nontrivial.
-    --
-    -- This also assumes a left-to-right evaluation order for binary expressions
-    -- and function arguments, which is standard-compliant but not necessarily
-    -- the same as what your compiler does.
+    -- from = everything Sequence (mkQ mempty fromExpression)
 
-    fromExpression :: CExpr -> [Ident]
+    -- This assumes a left-to-right evaluation order for binary expressions and
+    -- function arguments, which is standard-compliant but not necessarily the
+    -- same as what your compiler does.
+
+    fromExpression :: CExpr -> CallTree Ident
     fromExpression = \ case
       -- FIXME: Should be f() ? g() : h() => [[f], [g, h]]
-      -- CCond a mb c _
+      CCond a mb c _ -> Sequence
+        (everything Sequence (mkQ Nop fromExpression) a)
+        (Choice
+          (everything Sequence (mkQ Nop fromExpression) mb)
+          (everything Sequence (mkQ Nop fromExpression) c))
       -- FIXME: Should be f(g(), h(), ...) => [[g], [h], [f]]
-      CCall (CVar ident _) arguments callPos -> [ident]
-      _ -> []
+      CCall (CVar ident _) arguments callPos -> Sequence
+        (everything Sequence (mkQ Nop fromExpression) arguments)
+        (Call ident)
+      _ -> Nop
 
 extractPermissionActions :: [CAttr] -> PermissionActionSet
 extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
