@@ -1,4 +1,7 @@
+{-# LANGUAGE DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 
@@ -8,6 +11,7 @@ import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
+import Data.Map (Map)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
@@ -15,7 +19,37 @@ import GHC.Generics (Generic)
 import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
+import Language.C.Syntax.AST -- *
 import qualified Data.Text as Text
+
+type NameMap = Map Ident (Maybe CFunDef, PermissionActionSet)
+
+type CallMap = Map Ident (CallTree Ident, PermissionActionSet)
+
+data CallTree a
+  = Sequence !(CallTree a) !(CallTree a)
+  | Choice !(CallTree a) !(CallTree a)
+  | Call !a
+  | Nop
+  deriving (Foldable, Functor, Traversable)
+
+instance (Show a) => Show (CallTree a) where
+  showsPrec p = \ case
+    Sequence a b -> showParen (p > sequencePrec)
+      $ showsPrec sequencePrec a . showString " ; " . showsPrec sequencePrec b
+    Choice a b -> showParen (p > choicePrec)
+      $ showsPrec choicePrec a . showString " | " . showsPrec choicePrec b
+    Call ident -> shows ident
+    Nop -> id
+    where
+      sequencePrec = 1
+      choicePrec = 0
+
+callTreeBreadth :: CallTree a -> Int
+callTreeBreadth (Sequence a b) = callTreeBreadth a + callTreeBreadth b
+callTreeBreadth Choice{} = 1  -- Not sure if this is correct.
+callTreeBreadth Call{} = 1
+callTreeBreadth Nop = 0
 
 data Entry
   = Note !NodeInfo !Text

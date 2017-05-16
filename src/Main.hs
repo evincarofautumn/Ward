@@ -21,7 +21,6 @@ import qualified Config
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
-import qualified Data.Vector as Vector
 import qualified Graph
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
@@ -70,8 +69,7 @@ main = do
             (\ (name, (calls, permissions)) -> Function
               { functionName = nameFromIdent name
               , functionPermissions = permissions
-              , functionCalls = Vector.fromList
-                $ map (Vector.singleton . nameFromIdent) calls
+              , functionCalls = nameFromIdent <$> calls
               })
             $ Map.toList callMap
             where

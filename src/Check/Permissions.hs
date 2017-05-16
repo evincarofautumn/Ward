@@ -10,7 +10,7 @@ module Check.Permissions
   ) where
 
 import Control.Monad (unless, when)
-import Data.Foldable (forM_)
+import Data.Foldable (forM_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
@@ -37,18 +37,8 @@ data Node = Node
   { nodePermissions :: !(IORef PermissionActionSet)
   , nodeAnnotations :: !(IORef PermissionActionSet)
 
-  -- | The callees of this function. The outer vector is sequential; the inner
-  -- is parallel. For example:
-  --
-  -- > void foo(int x) {
-  -- >   bar();
-  -- >   if (x) { baz(); } else { quux(); }
-  -- >   glurch();
-  -- > }
-  --
-  -- > calls = [[bar], [baz, quux], [glurch]]
-  --
-  , nodeCalls :: !(Vector (Vector FunctionName))
+  -- | The callees of this function.
+  , nodeCalls :: !(CallTree FunctionName)
 
   -- | One more than the number of callees, representing the permission state
   -- before and after each call.
@@ -64,7 +54,7 @@ site = HashSet.singleton
 data Function = Function
   { functionName :: !FunctionName
   , functionPermissions :: !PermissionActionSet
-  , functionCalls :: !(Vector (Vector FunctionName))
+  , functionCalls :: !(CallTree FunctionName)
   }
 
 process :: [Function] -> [Restriction] -> IO ()
@@ -119,7 +109,7 @@ process functions restrictions = do
         -- for each sequential statement in function:
         putStr $ strConcat [show $ nodeCalls node, "; "]
         let
-          callVertices = fmap vertexFromName <$> nodeCalls node
+          callVertices = vertexFromName <$> nodeCalls node
           vertexFromName n = fromMaybe
             (error $ strConcat
               [ "missing graph node for function '"
@@ -127,35 +117,57 @@ process functions restrictions = do
               , "'"
               ])
             $ graphVertex n
-        flip Vector.imapM_ callVertices $ \ statement calls -> do
 
-          -- HACK: Should process all parallel calls.
-          let call = calls Vector.! 0
-          let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
-          callPermissions <- readIORef callPermissionsRef
+          process
+            :: CallTree Graph.Vertex  -- input
+            -> Int                    -- offset within current sequence
+            -> [IOVector Site]        -- stack of choices
+            -> IO (Site, Site)        -- call site permission presence sets before/after
+          process _ _ [] = error "stack underflow in call site processing"
+          process (Choice a b) i vs = do
+            callsA <- IOVector.replicate (callTreeBreadth a + 1) mempty
+            callsB <- IOVector.replicate (callTreeBreadth b + 1) mempty
+            (beforeA, afterA) <- process a 0 (callsA : vs)
+            (beforeB, afterB) <- process b 0 (callsB : vs)
+            -- FIXME: mappend (union) might not be quite right here.
+            pure (beforeA <> beforeB, afterA <> afterB)
+          process (Sequence a b) i vs = do
+            (beforeA, afterA) <- process a i vs
+            (beforeB, afterB) <- process b (i + callTreeBreadth a) vs
+            -- Not sure if afterA and beforeB need to be merged; they should already have been?
+            pure (beforeA, afterB)
+          process (Call call) i (v : vs) = do
 
-          putStr $ strConcat ["[call #", show statement, "(", show callName, ") -> ", show callPermissions, "]; "]
+            let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
+            callPermissions <- readIORef callPermissionsRef
 
-          -- Propagate permissions forward.
-          IOVector.write sites (succ statement) =<< IOVector.read sites statement
-          forM_ (HashSet.toList callPermissions) $ \ callPermission -> do
-            case callPermission of
+            putStr $ strConcat [show callName, " -> ", show callPermissions]
 
-              -- If a call needs a permission, its call site must have it.
-              Needs p -> do
-                IOVector.modify sites (<> site (Has p)) statement
+            -- Propagate permissions forward.
+            IOVector.write v (succ i) =<< IOVector.read v i
+            forM_ (HashSet.toList callPermissions) $ \ callPermission -> do
+              case callPermission of
 
-              -- If a call grants a permission, its call site must lack it, and
-              -- the following call site must have it.
-              Grants p -> do
-                IOVector.modify sites (<> site (Lacks p)) statement
-                IOVector.modify sites ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ statement
+                -- If a call needs a permission, its call site must have it.
+                Needs p -> do
+                  IOVector.modify v (<> site (Has p)) i
 
-              -- If a call revokes a permission, its call site must have it, and
-              -- the following call site must lack it.
-              Revokes p -> do
-                IOVector.modify sites (<> site (Has p)) statement
-                IOVector.modify sites ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ statement
+                -- If a call grants a permission, its call site must lack it, and
+                -- the following call site must have it.
+                Grants p -> do
+                  IOVector.modify v (<> site (Lacks p)) i
+                  IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
+
+                -- If a call revokes a permission, its call site must have it, and
+                -- the following call site must lack it.
+                Revokes p -> do
+                  IOVector.modify v (<> site (Has p)) i
+                  IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
+
+            -- Return permissions before and after call.
+            (,) <$> IOVector.read v i <*> IOVector.read v (succ i)
+
+          process Nop _ _ = pure (mempty, mempty)
 
         -- Propagate permissions backward.
         forM_ (reverse [1 .. IOVector.length sites - 2]) $ \ statement -> do
@@ -251,7 +263,7 @@ process functions restrictions = do
       -- There should be no contradictory information at call sites.
       -- TODO: Generalize to any restriction.
       sites <- Vector.freeze $ nodeSites node
-      forM_ (zip [0..] (Vector.toList sites)) $ \ (index, s) -> do
+      forM_ (zip [0 :: Int ..] (Vector.toList sites)) $ \ (index, s) -> do
         -- Precondition: has(P) always implies !lacks(P) and vice versa.
         let implicitRestrictions = [Has p `Implies` Not (Context (Lacks p)) | Has p <- HashSet.toList s]
         forM_ (implicitRestrictions <> restrictions) $ \ restriction -> do
@@ -269,8 +281,9 @@ process functions restrictions = do
                 0 -> ["before first call"]
                 _ ->
                   [ "at call to "
-                  , intercalate "/" $ map (("'" <>) . (<> "'") . Text.unpack) $ Vector.toList
-                    $ nodeCalls node Vector.! (index - 1)
+                  , "TODO: function name"
+                    {- intercalate "/" $ map (("'" <>) . (<> "'") . Text.unpack) $ Vector.toList
+                      $ nodeCalls node Vector.! (index - 1) -}
                   ]
 
 edgesFromFunctions :: [Function] -> IO [(Node, FunctionName, [FunctionName])]
@@ -280,7 +293,7 @@ edgesFromFunctions functions = do
     let name = functionName function
     permissions <- newIORef $ functionPermissions function
     annotations <- newIORef $ functionPermissions function
-    sites <- IOVector.replicate (Vector.length (functionCalls function) + 1) mempty
+    sites <- IOVector.replicate (callTreeBreadth (functionCalls function) + 1) mempty
     let
       node =
         ( Node
@@ -291,7 +304,7 @@ edgesFromFunctions functions = do
           , nodeName = name
           }
         , name
-        , Vector.toList $ Vector.concat $ Vector.toList $ functionCalls function
+        , toList $ functionCalls function
         )
     modifyIORef' result (node :)
   readIORef result
