@@ -126,7 +126,7 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
     fromFunction (CFunDef specifiers
       (CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
       parameters body _)
-      = everything Sequence (mkQ Nop fromStatement) body
+      = fromStatement body
       where
         -- TODO: Do something with parameter names?
         parameterNames =
@@ -140,15 +140,54 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
 
     fromStatement :: CStat -> CallTree Ident
     fromStatement = \ case
-      -- FIXME: Also CSwitch, CWhile, CFor?
-      CIf condition true mFalse _ -> Sequence
-        (everything Sequence (mkQ Nop fromExpression) condition)
-        (Choice
-          (everything Sequence (mkQ Nop fromExpression) true)
-          (everything Sequence (mkQ Nop fromExpression) mFalse))
-      statement -> everything Sequence (mkQ Nop fromExpression) statement
+      CLabel _label stat _attrs _pos
+        -> fromStatement stat
+      CCase expr stat _pos
+        -> fromExpression expr
+        `Sequence` fromStatement stat
+      CCases expr1 expr2 stat _pos
+        -> fromExpression expr1
+        `Sequence` fromExpression expr2
+        `Sequence` fromStatement stat
+      CDefault stat _pos
+        -> fromStatement stat
+      CExpr mExpr _pos
+        -> maybe Nop fromExpression mExpr
+      CCompound _localLabels blockItems _pos
+        -> foldr Sequence Nop $ map fromBlockItem blockItems
+      CIf expr stat1 mStat2 _pos
+        -> fromExpression expr
+        `Sequence` (fromStatement stat1 `Choice` maybe Nop fromStatement mStat2)
+      -- | switch statement @CSwitch selectorExpr switchStmt@, where
+      -- @switchStmt@ usually includes /case/, /break/ and /default/
+      -- statements
+      CSwitch expr stat _pos
+        -> fromExpression expr
+        `Sequence` fromStatement stat
+      CWhile expr stat isDoWhile _pos
+        | isDoWhile -> fromStatement stat `Sequence` fromExpression expr
+        | otherwise -> fromExpression expr `Sequence` fromStatement stat
+      CFor mExpr1OrDecl mExpr2 mExpr3 stat _pos
+        -> either (maybe Nop fromExpression) fromDeclaration mExpr1OrDecl
+        `Sequence` maybe Nop fromExpression mExpr2
+        `Sequence` maybe Nop fromExpression mExpr3
+        `Sequence` fromStatement stat
 
-    -- from = everything Sequence (mkQ mempty fromExpression)
+      -- TODO: Do something more clever with flow control statements?
+      CGoto _label _pos
+        -> Nop
+      CGotoPtr expr _pos
+        -> fromExpression expr
+      CCont _pos
+        -> Nop
+      CBreak _pos
+        -> Nop
+      CReturn mExpr a
+        -> maybe Nop fromExpression mExpr
+
+      -- TODO: Handle effects for assembly statements?
+      CAsm _asmStat _pos
+        -> Nop
 
     -- This assumes a left-to-right evaluation order for binary expressions and
     -- function arguments, which is standard-compliant but not necessarily the
@@ -156,17 +195,88 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
 
     fromExpression :: CExpr -> CallTree Ident
     fromExpression = \ case
-      -- FIXME: Should be f() ? g() : h() => [[f], [g, h]]
-      CCond a mb c _ -> Sequence
-        (everything Sequence (mkQ Nop fromExpression) a)
-        (Choice
-          (everything Sequence (mkQ Nop fromExpression) mb)
-          (everything Sequence (mkQ Nop fromExpression) c))
-      -- FIXME: Should be f(g(), h(), ...) => [[g], [h], [f]]
-      CCall (CVar ident _) arguments callPos -> Sequence
-        (everything Sequence (mkQ Nop fromExpression) arguments)
-        (Call ident)
-      _ -> Nop
+      CComma exprs _pos
+        -> foldr Sequence Nop $ map fromExpression exprs
+      CAssign _op expr1 expr2 _pos
+        -> fromExpression expr1
+        `Sequence` fromExpression expr2
+      CCond expr1 mExpr2 expr3 _pos
+        -> fromExpression expr1
+        `Sequence` (maybe Nop fromExpression mExpr2 `Choice` fromExpression expr3)
+      CBinary _op expr1 expr2 _pos
+        -> fromExpression expr1
+        `Sequence` fromExpression expr2
+      -- I'm pretty sure nothing needs to be done with the declaration here.
+      CCast _decl expr _pos
+        -> fromExpression expr
+      CUnary _op expr _pos
+        -> fromExpression expr
+      CSizeofExpr expr _pos
+        -> fromExpression expr
+      CSizeofType _decl _pos
+        -> Nop
+      CAlignofExpr expr _pos
+        -> fromExpression expr
+      CAlignofType _decl _pos
+        -> Nop
+      CComplexReal expr _pos
+        -> fromExpression expr
+      CComplexImag expr _pos
+        -> fromExpression expr
+      CIndex expr1 expr2 _pos
+        -> fromExpression expr1
+        `Sequence` fromExpression expr2
+      CCall (CVar name _) args _pos
+        -> foldr Sequence Nop (map fromExpression args)
+        `Sequence` Call name
+      CCall expr args _pos
+        -> foldr Sequence Nop (map fromExpression args)
+        `Sequence` fromExpression expr
+      CMember expr _name _deref _pos
+        -> fromExpression expr
+      CVar _name _pos
+        -> Nop
+      CConst _const
+        -> Nop
+      CCompoundLit _decl initList _pos
+        -> fromInitList initList
+      -- TODO: This should probably be a choice of the possible cases.
+      CGenericSelection expr _cases _pos
+        -> Nop
+      CStatExpr stat _pos
+        -> fromStatement stat
+      CLabAddrExpr _label _pos
+        -> Nop
+      -- TODO: Handle permissions for builtins.
+      CBuiltinExpr _builtin
+        -> Nop
+
+    fromBlockItem :: CBlockItem -> CallTree Ident
+    fromBlockItem = \ case
+      CBlockStmt stat -> fromStatement stat
+      CBlockDecl decl -> fromDeclaration decl
+      -- TODO: Handle nested functions?
+      CNestedFunDef _def -> Nop
+
+    fromDeclaration :: CDecl -> CallTree Ident
+    fromDeclaration (CDecl _specs declarators _pos)
+      = foldr Sequence Nop
+      [ fromInitializer initializer
+      | (_, Just initializer, _) <- declarators
+      ]
+    fromDeclaration CStaticAssert{}
+      = Nop
+
+    fromInitializer :: CInit -> CallTree Ident
+    fromInitializer (CInitExpr expr _pos) = fromExpression expr
+    fromInitializer (CInitList initList _pos) = fromInitList initList
+
+    fromInitList :: CInitList -> CallTree Ident
+    fromInitList initList
+      = foldr Sequence Nop
+      [ fromInitializer initializer
+      | (_, initializer) <- initList
+      ]
 
 extractPermissionActions :: [CAttr] -> PermissionActionSet
 extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
