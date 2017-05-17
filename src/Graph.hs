@@ -170,7 +170,7 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
 
 extractPermissionActions :: [CAttr] -> PermissionActionSet
 extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
-  CAttr (Ident "permission" _ _) expressions _ <- select attributes
+  CAttr (Ident "ward" _ _) expressions _ <- select attributes
   CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
   permissionSpec <- select permissions
   (permission, mSubject) <- case permissionSpec of
@@ -186,10 +186,10 @@ extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runL
     -- FIXME: Report malformed permission specifier.
     other -> mzero
   action <- case actionName of
-    "needs" -> return Needs
+    "need" -> return Needs
     -- "deny" -> return Deny
-    "grants" -> return Grants
-    "revokes" -> return Revokes
+    "grant" -> return Grants
+    "revoke" -> return Revokes
     -- "waive" -> return Waive
     -- FIXME: Report unknown permission action.
     _ -> mzero
