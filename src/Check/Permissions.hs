@@ -14,11 +14,10 @@ import Data.Foldable (forM_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
-import Data.List (intercalate, nub)
+import Data.List (nub)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Text (Text)
-import Data.Vector (Vector)
 import Data.Vector.Mutable (IOVector)
 import Types
 import qualified Data.Graph as Graph
@@ -27,6 +26,8 @@ import qualified Data.Text as Text
 import qualified Data.Tree as Tree
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
+
+import Debug.Trace (trace)
 
 type FunctionName = Text
 
@@ -65,12 +66,6 @@ process functions restrictions = do
     graphLookup :: Graph.Vertex -> (Node, FunctionName, [FunctionName])
     graphVertex :: FunctionName -> Maybe Graph.Vertex
     (callerGraph, graphLookup, graphVertex) = graphFromEdges edges
-
-    graphLookupName :: Graph.Vertex -> FunctionName
-    graphLookupName = (\ (_, name, _) -> name) . graphLookup
-
-    graphLookupNode :: Graph.Vertex -> Node
-    graphLookupNode = (\ (node, _, _) -> node) . graphLookup
 
     calleeGraph :: Graph
     calleeGraph = Graph.transposeG callerGraph
@@ -118,25 +113,46 @@ process functions restrictions = do
               ])
             $ graphVertex n
 
-          process
+          processCallTree
             :: CallTree Graph.Vertex  -- input
             -> Int                    -- offset within current sequence
             -> [IOVector Site]        -- stack of choices
-            -> IO (Site, Site)        -- call site permission presence sets before/after
-          process _ _ [] = error "stack underflow in call site processing"
-          process (Choice a b) i vs = do
+            -> IO ()
+          processCallTree _ _ [] = error "stack underflow in call site processing"
+
+          processCallTree (Choice a b) i (v : vs) = do
+            trace ("processing choice (" ++ show (length vs) ++ ")") (pure ())
             callsA <- IOVector.replicate (callTreeBreadth a + 1) mempty
             callsB <- IOVector.replicate (callTreeBreadth b + 1) mempty
-            (beforeA, afterA) <- process a 0 (callsA : vs)
-            (beforeB, afterB) <- process b 0 (callsB : vs)
-            -- FIXME: mappend (union) might not be quite right here.
-            pure (beforeA <> beforeB, afterA <> afterB)
-          process (Sequence a b) i vs = do
-            (beforeA, afterA) <- process a i vs
-            (beforeB, afterB) <- process b (i + callTreeBreadth a) vs
-            -- Not sure if afterA and beforeB need to be merged; they should already have been?
-            pure (beforeA, afterB)
-          process (Call call) i (v : vs) = do
+            processCallTree a 0 (callsA : vs)
+            processCallTree b 0 (callsB : vs)
+            beforeA <- IOVector.read callsA 0
+            afterA <- IOVector.read callsA (IOVector.length callsA - 1)
+            beforeB <- IOVector.read callsB 0
+            afterB <- IOVector.read callsB (IOVector.length callsB - 1)
+            IOVector.write v i (beforeA <> beforeB)
+            IOVector.write v (succ i) (afterA <> afterB)
+
+            -- merge callsA & callsB?
+
+          processCallTree (Sequence a b) i vs@(v : _) = do
+            trace ("processing sequence (" ++ show (length vs) ++ ")") (pure ())
+            processCallTree a i vs
+            processCallTree b (i + callTreeBreadth a) vs
+            -- Assuming sequences are right-associative, if this is the root of
+            -- a sequence:
+            when (i == 0) $ do
+              -- Propagate permissions backward through whole sequence.
+              forM_ (reverse [1 .. IOVector.length v - 2]) $ \ statement -> do
+                after <- IOVector.read v statement
+                flip (IOVector.modify v) (pred statement) $ \ before
+                  -> before <> (foldr HashSet.delete after
+                    $ concatMap (\p -> [Has p, Lacks p])
+                    $ map presencePermission
+                    $ HashSet.toList before)
+
+          processCallTree (Call call) i (v : vs) = do
+            trace ("processing call (" ++ show (length vs) ++ ")") (pure ())
 
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
@@ -164,58 +180,49 @@ process functions restrictions = do
                   IOVector.modify v (<> site (Has p)) i
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
 
-            -- Return permissions before and after call.
-            (,) <$> IOVector.read v i <*> IOVector.read v (succ i)
+          processCallTree Nop _ _ = pure ()
 
-          process Nop _ _ = pure (mempty, mempty)
+          permissionsFromCallSites :: IORef PermissionActionSet -> IOVector Site -> IO Bool
+          permissionsFromCallSites permissionRef callsites = do
+            currentSize <- HashSet.size <$> readIORef permissionRef
 
-        -- Propagate permissions backward.
-        forM_ (reverse [1 .. IOVector.length sites - 2]) $ \ statement -> do
-          after <- IOVector.read sites statement
-          flip (IOVector.modify sites) (pred statement) $ \ before
-            -> before <> (foldr HashSet.delete after
-              $ concatMap (\p -> [Has p, Lacks p])
-              $ map presencePermission
-              $ HashSet.toList before)
+            -- For each "relevant" permission P in first & last callsites:
+            initial <- IOVector.read callsites 0
+            final <- IOVector.read callsites (IOVector.length callsites - 1)
+            let
+              relevantPermissions = nub $ map presencePermission
+                $ HashSet.toList initial <> HashSet.toList final
 
-        do
-          currentSize <- HashSet.size <$> readIORef (nodePermissions node)
+            putStr $ strConcat ["(relevant: ", show relevantPermissions, "); "]
 
-          -- For each "relevant" permission P in first & last callsites:
-          initial <- IOVector.read sites 0
-          final <- IOVector.read sites (IOVector.length sites - 1)
-          let
-            relevantPermissions = nub $ map presencePermission
-              $ HashSet.toList initial <> HashSet.toList final
+            forM_ relevantPermissions $ \ p -> do
+              when (Has p `HashSet.member` initial) $ do
 
-          putStr $ strConcat ["(relevant: ", show relevantPermissions, "); "]
+                -- When the initial state has a permission, the function needs
+                -- that permission.
+                modifyIORef' permissionRef $ HashSet.insert $ Needs p
 
-          forM_ relevantPermissions $ \ p -> do
-            when (Has p `HashSet.member` initial) $ do
+                -- When the initial state has a permission but the final state
+                -- lacks it, the function revokes that permission.
+                when (Lacks p `HashSet.member` final) $ do
+                  modifyIORef' permissionRef $ HashSet.insert $ Revokes p
 
-              -- When the initial state has a permission, the function needs
-              -- that permission.
-              modifyIORef' (nodePermissions node) $ HashSet.insert $ Needs p
+              when (Lacks p `HashSet.member` initial && Has p `HashSet.member` final) $ do
+                -- When the initial state lacks a permission but the final state
+                -- has it, the function grants that permission.
+                modifyIORef' permissionRef $ HashSet.insert $ Grants p
 
-              -- When the initial state has a permission but the final state
-              -- lacks it, the function revokes that permission.
-              when (Lacks p `HashSet.member` final) $ do
-                modifyIORef' (nodePermissions node) $ HashSet.insert $ Revokes p
+            modifiedSize <- HashSet.size <$> readIORef permissionRef
 
-            when (Lacks p `HashSet.member` initial && Has p `HashSet.member` final) $ do
-              -- When the initial state lacks a permission but the final state
-              -- has it, the function grants that permission.
-              modifyIORef' (nodePermissions node) $ HashSet.insert $ Grants p
+            -- If we added permissions, the inferred set of permissions for this
+            -- SCC may still be growing, so we re-process the SCC until we reach a
+            -- fixed point.
+            --
+            -- TODO: Limit the number of iterations to prevent infinite loops.
+            pure $ modifiedSize > currentSize
 
-          modifiedSize <- HashSet.size <$> readIORef (nodePermissions node)
-
-          -- If we added permissions, the inferred set of permissions for this
-          -- SCC may still be growing, so we re-process the SCC until we reach a
-          -- fixed point.
-          --
-          -- TODO: Limit the number of iterations to prevent infinite loops.
-          writeIORef growing $ modifiedSize > currentSize
-
+        processCallTree callVertices 0 [sites]
+        writeIORef growing =<< permissionsFromCallSites (nodePermissions node) sites
         print =<< readIORef (nodePermissions node)
 
       do
