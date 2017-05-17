@@ -1,4 +1,4 @@
-int foo(void) __attribute__ ((permission (need (baz))));
+int foo(void) __attribute__ ((permission (needs (baz))));
 int bar(void);
 
 int foo (void)
