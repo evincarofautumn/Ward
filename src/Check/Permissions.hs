@@ -27,8 +27,6 @@ import qualified Data.Tree as Tree
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 
-import Debug.Trace (trace)
-
 type FunctionName = Text
 
 data Node = Node
@@ -86,11 +84,8 @@ process functions restrictions = do
           (node, name, _incoming) = graphLookup vertex
           sites = nodeSites node
 
-        putStr $ Text.unpack name <> " = "
-
         -- for each permission action in function:
         permissionActions <- readIORef $ nodePermissions node
-        putStr $ "{" ++ show permissionActions ++ "} "
         forM_ (HashSet.toList permissionActions) $ \ permissionAction -> do
 
           flip (IOVector.modify sites) 0 $ (<>) . site $ case permissionAction of
@@ -103,7 +98,6 @@ process functions restrictions = do
             Grants p -> Lacks p
 
         -- for each sequential statement in function:
-        putStrLn $ strConcat [show $ nodeCalls node]
         let
           callVertices = vertexFromName <$> nodeCalls node
           vertexFromName n = fromMaybe
@@ -133,14 +127,6 @@ process functions restrictions = do
             IOVector.write v (succ i) (afterA <> afterB)
 
           processCallTree (Sequence a b) i v = do
-            putStr "Processing sequence.\n\tv0: "
-            print =<< Vector.freeze v
-            processCallTree a i v
-            putStr "\tv1: "
-            print =<< Vector.freeze v
-            processCallTree b (i + callTreeBreadth a) v
-            putStr "\tv2: "
-            print =<< Vector.freeze v
             -- Assuming sequences are right-associative, if this is the root of
             -- a sequence:
             when (i == 0) $ do
@@ -156,8 +142,6 @@ process functions restrictions = do
           processCallTree (Call call) i v = do
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
-
-            putStrLn $ strConcat [show callName, " -> ", show callPermissions]
 
             -- Propagate permissions forward.
             IOVector.write v (succ i) =<< IOVector.read v i
@@ -193,8 +177,6 @@ process functions restrictions = do
               relevantPermissions = nub $ map presencePermission
                 $ HashSet.toList initial <> HashSet.toList final
 
-            putStrLn $ strConcat ["(relevant: ", show relevantPermissions, "); "]
-
             forM_ relevantPermissions $ \ p -> do
               when (Has p `HashSet.member` initial) $ do
 
@@ -223,7 +205,6 @@ process functions restrictions = do
 
         processCallTree callVertices 0 sites
         writeIORef growing =<< permissionsFromCallSites (nodePermissions node) sites
-        print =<< readIORef (nodePermissions node)
 
       do
         shouldContinue <- readIORef growing
