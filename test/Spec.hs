@@ -52,6 +52,18 @@ spec = do
         "perm1;"
         $ Right $ Config $ Map.singleton "perm1" mempty
 
+    it "accepts permission declaration with modifier" $ do
+      configTest
+        "perm1 implicit;"
+        $ Right $ Config $ Map.singleton "perm1"
+        mempty { Config.declImplicit = True }
+
+    it "accepts permission declaration with description" $ do
+      configTest
+        "perm1 \"permission the first\";"
+        $ Right $ Config $ Map.singleton "perm1"
+        mempty { Config.declDescription = Just "permission the first" }
+
     it "accepts multiple permission declarations" $ do
       configTest
         "perm1; perm2;"
@@ -64,13 +76,13 @@ spec = do
       configTest
         "perm1 -> perm2;"
         $ Right $ Config $ Map.singleton "perm1"
-        $ Declaration False [("perm2", Nothing)]
+        $ Declaration False Nothing [("perm2", Nothing)]
 
     it "accepts relationship declaration with description" $ do
       configTest
         "perm1 -> perm2 \"perm1 implies perm2\";"
         $ Right $ Config $ Map.singleton "perm1"
-        $ Declaration False
+        $ Declaration False Nothing
           [ ("perm2", Just "perm1 implies perm2")
           ]
 
@@ -78,7 +90,7 @@ spec = do
       configTest
         "p1 -> p2 & p3 | p4 & !p5 | !(p6 & p7);"
         $ Right $ Config $ Map.singleton "p1"
-        $ Declaration False
+        $ Declaration False Nothing
           [ ("p2" `And` "p3" `Or` "p4" `And` Not "p5" `Or` Not ("p6" `And` "p7"), Nothing)
           ]
 
