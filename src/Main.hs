@@ -66,8 +66,9 @@ main = do
           callMap = Graph.fromTranslationUnits implicitPermissions
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
-            (\ (name, (calls, permissions)) -> Function
-              { functionName = nameFromIdent name
+            (\ (name, (pos, calls, permissions)) -> Function
+              { functionPos = pos
+              , functionName = nameFromIdent name
               , functionPermissions = permissions
               , functionCalls = nameFromIdent <$> calls
               })

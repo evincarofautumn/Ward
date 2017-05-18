@@ -19,6 +19,8 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Text (Text)
 import Data.Vector.Mutable (IOVector)
+import Language.C.Data.Node (NodeInfo, posOfNode)
+import Language.C.Data.Position (Position, posFile)
 import Types
 import qualified Data.Graph as Graph
 import qualified Data.HashSet as HashSet
@@ -26,6 +28,8 @@ import qualified Data.Text as Text
 import qualified Data.Tree as Tree
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
+
+import Debug.Trace (trace)
 
 type FunctionName = Text
 
@@ -51,13 +55,32 @@ site :: PermissionPresence -> Site
 site = HashSet.singleton
 
 data Function = Function
-  { functionName :: !FunctionName
+  { functionPos :: !NodeInfo
+  , functionName :: !FunctionName
   , functionPermissions :: !PermissionActionSet
   , functionCalls :: !(CallTree FunctionName)
   }
 
+requiresAnnotation :: NodeInfo -> Bool
+requiresAnnotation = (\x -> trace x (x == "blarney")) . posFile . posOfNode
+
 process :: [Function] -> [Restriction] -> IO ()
 process functions restrictions = do
+
+  -- Get permissions from functions that require annotations.
+  let
+    requiredAnnotations = 
+      [ (name, permissions)
+      | Function
+        { functionName = name
+        , functionPos = pos
+        , functionPermissions = permissions
+        } <- functions
+      , requiresAnnotation pos
+      ]
+  print $ length requiredAnnotations
+
+  -- Build call graph.
   edges <- edgesFromFunctions functions
   let
     callerGraph :: Graph
@@ -71,7 +94,7 @@ process functions restrictions = do
     topologicallySorted = Graph.topSort calleeGraph
     sccs = Graph.dfs calleeGraph topologicallySorted
 
-  -- for each scc in sccs:
+  -- Propagate permission information through the graph.
   forM_ sccs $ \ scc -> do
     -- while permissions are growing:
     growing <- newIORef True
