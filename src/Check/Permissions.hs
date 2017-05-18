@@ -31,8 +31,6 @@ import qualified Data.Vector.Mutable as IOVector
 
 import Debug.Trace (trace)
 
-type FunctionName = Text
-
 data Node = Node
 
   -- | The permission actions of the function. This is set in the initial state
