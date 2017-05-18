@@ -22,6 +22,8 @@ import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
 import qualified Data.Text as Text
 
+type FunctionName = Text
+
 type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 
 type CallMap = Map Ident (NodeInfo, CallTree Ident, PermissionActionSet)
