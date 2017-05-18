@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Config
   ( Config(..)
   , Declaration(..)
@@ -32,13 +34,19 @@ import qualified Data.Text as Text
 
 data Declaration = Declaration
   { declImplicit :: !Bool
+  , declDescription :: !(Maybe Description)
   , declRestrictions :: [(Expression, Maybe Description)]
   } deriving (Eq, Show)
 
 instance Monoid Declaration where
-  mempty = Declaration False mempty
+  mempty = Declaration False Nothing mempty
   mappend a b = Declaration
     { declImplicit = declImplicit a || declImplicit b
+    , declDescription = case (declDescription a, declDescription b) of
+      (Just da, Just db) -> Just (da <> "; " <> db)
+      (da@Just{}, Nothing) -> da
+      (Nothing, db@Just{}) -> db
+      _ -> Nothing
     , declRestrictions = declRestrictions a <> declRestrictions b
     }
 
@@ -69,6 +77,7 @@ declaration = (,)
   <$> (permission <* silence)
   <*> (Declaration
     <$> option False (True <$ lexeme (string "implicit"))
+    <*> optionMaybe description
     <*> many restriction <* operator ';')
 
 restriction :: Parser (Expression, Maybe Description)
