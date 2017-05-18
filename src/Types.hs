@@ -22,9 +22,9 @@ import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
 import qualified Data.Text as Text
 
-type NameMap = Map Ident (Maybe CFunDef, PermissionActionSet)
+type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 
-type CallMap = Map Ident (CallTree Ident, PermissionActionSet)
+type CallMap = Map Ident (NodeInfo, CallTree Ident, PermissionActionSet)
 
 data CallTree a
   = Sequence !(CallTree a) !(CallTree a)

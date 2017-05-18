@@ -17,6 +17,8 @@ import qualified Data.HashSet as HashSet
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 
+import Debug.Trace
+
 -- | Builds a call graph from a set of translation units.
 fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> CallMap
 fromTranslationUnits _implicitPermissions
@@ -78,11 +80,26 @@ nameMapFromTranslationUnit
   :: implicitPermissions -> CTranslUnit -> NameMap
 nameMapFromTranslationUnit _implicitPermissions
   (CTranslUnit externalDeclarations _)
-  = everything (<>) (mkQ mempty fromDecl) externalDeclarations
+  = everything combine (mkQ mempty fromDecl) externalDeclarations
   where
+    -- Combine name maps, preferring to preserve *declaration* position (if any)
+    -- and *definition* body (if any). This allows us to later enforce the
+    -- presence of annotations based on file name, e.g., that anything declared
+    -- in the public header of a "module" must be annotated.
+    combine :: NameMap -> NameMap -> NameMap
+    combine = Map.unionWith combine
+      where
+        combine (pos1, mDef1, perm1) (pos2, mDef2, perm2) = case (mDef1, mDef2) of
+          (Nothing, Just{}) -> (pos1, mDef2, perms)
+          (Just{}, Nothing) -> (pos2, mDef1, perms)
+          _ -> (pos1, mDef1, perms)
+          where
+            perms = perm1 <> perm2
+
+    fromDecl :: CExtDecl -> NameMap
     fromDecl = \ case
       -- For an external declaration, record an empty body.
-      CDeclExt (CDecl specifiers fullDeclarators _) -> let
+      CDeclExt (CDecl specifiers fullDeclarators pos) -> let
         specifierPermissions = extractPermissionActions
           [attr | CTypeQual (CAttrQual attr) <- specifiers]
         -- TODO: Do something with derived declarators?
@@ -91,14 +108,15 @@ nameMapFromTranslationUnit _implicitPermissions
           [ (ident, specifierPermissions)
           | ident <- map fst declaratorPermissions
           ]
-        in Map.map ((,) Nothing) $ Map.fromListWith (<>) identPermissions
+        in Map.map (\ x -> (pos, Nothing, x))
+          $ Map.fromListWith (<>) identPermissions
 
       -- For a function definition, record the function body in the context.
       CFDefExt definition@(CFunDef specifiers
-        (CDeclr (Just ident) _ _ _ _) _parameters _body _) -> let
+        (CDeclr (Just ident) _ _ _ _) _parameters _body pos) -> let
           specifierPermissions = extractPermissionActions
             [attr | CTypeQual (CAttrQual attr) <- specifiers]
-          in Map.singleton ident (Just definition, specifierPermissions)
+          in Map.singleton ident (pos, Just definition, specifierPermissions)
 
       _ -> mempty
 
@@ -118,9 +136,9 @@ simplify leaf = leaf
 callMapFromNameMap :: NameMap -> CallMap
 callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
   where
-    fromEntry (name, (mDef, permissions)) = let
+    fromEntry (name, (pos, mDef, permissions)) = let
       calls = maybe Nop fromFunction mDef
-      in (name, (simplify calls, permissions))
+      in (name, (pos, simplify calls, permissions))
 
     fromFunction :: CFunDef -> CallTree Ident
     fromFunction (CFunDef specifiers
