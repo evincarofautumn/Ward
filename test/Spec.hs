@@ -9,6 +9,7 @@ import Config (Config(..), Declaration(Declaration))
 import Control.Concurrent.Chan (getChanContents, newChan)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
+import Data.These
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Node (NodeInfo)
@@ -106,6 +107,24 @@ spec = do
             [ ("p2" `And` "p3" `Or` "p4" `And` Not "p5" `Or` Not ("p6" `And` "p7"), Nothing)
             ]
         }
+
+    it "accepts enforcement with path" $ do
+      configTest
+        ".enforce \"foo.c\";"
+        $ Right $ mempty
+        { configEnforcements = [This "foo.c"] }
+
+    it "accepts enforcement with name" $ do
+      configTest
+        ".enforce bar;"
+        $ Right $ mempty
+        { configEnforcements = [That "bar"] }
+
+    it "accepts enforcement with path and name" $ do
+      configTest
+        ".enforce \"foo.c\" bar;"
+        $ Right $ mempty
+        { configEnforcements = [These "foo.c" "bar"] }
 
   describe "with simple errors" $ do
 
