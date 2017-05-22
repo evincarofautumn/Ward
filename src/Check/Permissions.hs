@@ -9,27 +9,27 @@ module Check.Permissions
   , process
   ) where
 
+import Config
 import Control.Monad (unless, when)
 import Data.Foldable (forM_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
-import Data.List (nub)
+import Data.List (isSuffixOf, nub)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
-import Data.Text (Text)
+import Data.These
 import Data.Vector.Mutable (IOVector)
 import Language.C.Data.Node (NodeInfo, posOfNode)
-import Language.C.Data.Position (Position, posFile)
+import Language.C.Data.Position (posFile)
 import Types
 import qualified Data.Graph as Graph
 import qualified Data.HashSet as HashSet
+import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified Data.Tree as Tree
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
-
-import Debug.Trace (trace)
 
 data Node = Node
 
@@ -59,24 +59,38 @@ data Function = Function
   , functionCalls :: !(CallTree FunctionName)
   }
 
-requiresAnnotation :: NodeInfo -> Bool
-requiresAnnotation = (\x -> trace x (x == "blarney")) . posFile . posOfNode
-
-process :: [Function] -> [Restriction] -> IO ()
-process functions restrictions = do
+process :: [Function] -> Config -> IO ()
+process functions config = do
 
   -- Get permissions from functions that require annotations.
   let
+    requiresAnnotation :: FunctionName -> NodeInfo -> Bool
+    requiresAnnotation name info = or
+      [ case enforcement of
+        This path' -> path' `isSuffixOf` path
+        That name' -> name == name'
+        These path' name' -> path' `isSuffixOf` path && name == name'
+      | enforcement <- configEnforcements config
+      ]
+      where
+        path = posFile $ posOfNode info
+
     requiredAnnotations = 
       [ (name, permissions)
       | Function
         { functionName = name
-        , functionPos = pos
+        , functionPos = info
         , functionPermissions = permissions
         } <- functions
-      , requiresAnnotation pos
+      , requiresAnnotation name info
       ]
-  print $ length requiredAnnotations
+
+    -- TODO: Keep full declarations for error reporting.
+    restrictions =
+      [ Has name `Implies` expr
+      | (name, decl) <- Map.toList $ configDeclarations config
+      , (expr, _desc) <- declRestrictions decl
+      ]
 
   -- Build call graph.
   edges <- edgesFromFunctions functions

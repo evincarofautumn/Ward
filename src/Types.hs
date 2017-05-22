@@ -14,6 +14,7 @@ import Data.Hashable (Hashable(..))
 import Data.Map (Map)
 import Data.Monoid ((<>))
 import Data.Text (Text)
+import Data.These
 import GHC.Exts (IsString(..))
 import GHC.Generics (Generic)
 import Language.C.Data.Ident (Ident(..))
@@ -178,6 +179,7 @@ reasonPos :: Reason -> NodeInfo
 reasonPos (NoReason pos) = pos
 reasonPos (BecauseCall (Ident _ _ pos)) = pos
 
+type Enforcement = These FilePath FunctionName
 
 data Restriction = !PermissionPresence `Implies` Expression
 

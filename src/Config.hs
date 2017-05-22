@@ -57,7 +57,7 @@ instance Monoid Declaration where
 
 data Config = Config
   { configDeclarations :: !(Map PermissionName Declaration)
-  , configEnforcements :: [These FilePath FunctionName]
+  , configEnforcements :: [Enforcement]
   } deriving (Eq, Show)
 
 instance Monoid Config where
@@ -86,7 +86,7 @@ parser = do
     , configEnforcements = enforcements
     }
 
-enforcement :: Parser (These FilePath FunctionName)
+enforcement :: Parser Enforcement
 enforcement = lexeme (string ".enforce") *> do
   mPath <- optionMaybe stringLiteral
   mName <- optionMaybe name
