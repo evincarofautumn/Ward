@@ -4,6 +4,7 @@
 module Main (main) where
 
 import Check.Permissions (Function(..))
+import Config
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless, when)
@@ -17,7 +18,6 @@ import System.IO (hPutStrLn, stderr)
 import Types
 import qualified Args
 import qualified Check.Permissions as Permissions
-import qualified Config
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
@@ -33,7 +33,7 @@ main = do
   unless (null $ Args.configFilePaths args) $ do
     when (Args.outputMode args == CompilerOutput) $ do
       putStrLn "Loading config files..."
-  _config <- do
+  config <- do
     parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
     case sequence parsedConfigs of
       Right configs -> pure $ mconcat configs
@@ -75,8 +75,7 @@ main = do
             $ Map.toList callMap
             where
               nameFromIdent (Ident name _ _) = Text.pack name
-          restrictions = []
-        liftIO $ Permissions.process functions restrictions
+        liftIO $ Permissions.process functions config
         endLog
 
       let
