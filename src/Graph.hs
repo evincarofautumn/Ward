@@ -87,9 +87,9 @@ nameMapFromTranslationUnit _implicitPermissions
     -- presence of annotations based on file name, e.g., that anything declared
     -- in the public header of a "module" must be annotated.
     combine :: NameMap -> NameMap -> NameMap
-    combine = Map.unionWith combine
+    combine = Map.unionWith combine'
       where
-        combine (pos1, mDef1, perm1) (pos2, mDef2, perm2) = case (mDef1, mDef2) of
+        combine' (pos1, mDef1, perm1) (pos2, mDef2, perm2) = case (mDef1, mDef2) of
           (Nothing, Just{}) -> (pos1, mDef2, perms)
           (Just{}, Nothing) -> (pos2, mDef1, perms)
           _ -> (pos1, mDef1, perms)
@@ -332,9 +332,7 @@ extractDeclaratorPermissionActions = runIdentity . foldrM go []
     -- TODO: Do something with derived declarators?
     go (Just (CDeclr (Just ident) _derived _ attributes _), _, _) acc = do
       let permissionActions = extractPermissionActions attributes
-      return $ if HashSet.null permissionActions
-        then acc
-        else (ident, permissionActions) : acc
+      return $ (ident, permissionActions) : acc
     go _ acc = return acc
 
 select :: (Monad m) => [a] -> ListT m a

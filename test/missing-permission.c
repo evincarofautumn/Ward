@@ -1,5 +1,4 @@
-int foo(void) __attribute__ ((ward (need (baz))));
-int bar(void);
+#include "missing-permission.h"
 
 int foo (void)
 {
