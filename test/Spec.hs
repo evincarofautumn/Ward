@@ -151,7 +151,9 @@ spec = do
 
     it "reports missing permission" $ do
       wardTest defArgs
-        { Args.translationUnitPaths = ["test/missing-permission.c"] }
+        { Args.translationUnitPaths = ["test/missing-permission.c"]
+        , Args.configFilePaths = ["test/missing-permission.h"]
+        }
         $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
