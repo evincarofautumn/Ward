@@ -154,6 +154,8 @@ data PermissionAction
   = Needs !PermissionName
   | Grants !PermissionName
   | Revokes !PermissionName
+  | Denies !PermissionName
+  | Waives !PermissionName
   deriving (Eq, Generic, Ord)
 
 type PermissionActionSet = HashSet PermissionAction
@@ -222,6 +224,8 @@ instance Show PermissionAction where
     Needs p -> concat ["needs(", show p, ")"]
     Grants p -> concat ["grants(", show p, ")"]
     Revokes p -> concat ["revokes(", show p, ")"]
+    Denies p -> concat ["denies(", show p, ")"]
+    Waives p -> concat ["waives(", show p, ")"]
 
 instance Hashable PermissionAction
 

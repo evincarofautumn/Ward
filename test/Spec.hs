@@ -5,6 +5,7 @@ module Main
   ) where
 
 import Args (Args(Args))
+import Check.Permissions (Function(..))
 import Config (Config(..), Declaration(Declaration))
 import Control.Concurrent.Chan (getChanContents, newChan)
 import Data.Maybe (fromJust, isJust)
@@ -12,6 +13,7 @@ import Data.Text (Text)
 import Data.These
 import Data.Traversable (forM)
 import Language.C (parseCFile)
+import Language.C.Data.Ident (Ident(Ident))
 import Language.C.Data.Node (NodeInfo)
 import Language.C.System.GCC (newGCC)
 import Test.HUnit hiding (errors)
@@ -19,10 +21,12 @@ import Test.Hspec
 import Text.Parsec (ParseError)
 import Types
 import qualified Args
+import qualified Check.Permissions as Permissions
 import qualified Config
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Graph
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -128,6 +132,7 @@ spec = do
 
   describe "with simple errors" $ do
 
+{-
     it "reports invalid permission actions" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/invalid-permission-action.c"] }
@@ -148,65 +153,29 @@ spec = do
               , (_, "unknown permission action 'require'; ignoring")
               ] -> True
             _ -> False
+-}
 
     it "reports missing permission" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/missing-permission.c"]
-        , Args.configFilePaths = ["test/missing-permission.h"]
-        }
-        $ \ (_notes, _warnings, errors) -> do
+        , Args.configFilePaths = ["test/missing-permission.config"]
+        } $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [(_, "because of call to 'foo', need permission 'baz' not present in context []")] -> True
+            [(_, "missing required annotation on 'bar';\
+                 \ annotation [] is missing: [needs(baz)]")] -> True
             _ -> False
 
     it "reports disallowed permission" $ do
       wardTest defArgs
-        { Args.translationUnitPaths = ["test/disallowed-permission.c"] }
-        $ \ (_notes, _warnings, errors) -> do
+        { Args.translationUnitPaths = ["test/disallowed-permission.c"]
+        } $ \ (_notes, _warnings, errors) -> do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [(_, "because of call to 'foo', denying disallowed permission 'baz' present in context [baz]")] -> True
-            _ -> False
-
-  describe "with local permissions" $ do
-
-    it "reports missing permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/permission-with-subject.c"] }
-        $ \ (_notes, _warnings, errors) -> do
-        assertBool (unlines $ "expected permission error but got:" : map show errors)
-          $ case errors of
-            [ (_, "because of call to 'requires_lock',\
-                  \ need permission 'locked' for variable 'q'\
-                  \ not present in context []")
-              , (_, "because of call to 'requires_lock',\
-                    \ need permission 'locked' for variable 'p'\
-                    \ not present in context []")
-              ]
-              -> True
-            _ -> False
-
-
-    it "reports disallowed permission" $ do
-      wardTest defArgs
-        { Args.translationUnitPaths = ["test/disallowed-with-subject.c"] }
-        $ \ (_notes, _warnings, errors) -> do
-        assertBool (unlines $ "expected permission error but got:" : map show errors)
-          $ case errors of
-            [ (_, "because of call to 'lock',\
-                  \ denying disallowed permission 'locked' for variable 'p'\
-                  \ present in context [locked]")
-              , (_, "because of call to 'denies_lock',\
-                    \ denying disallowed permission 'locked' for variable 'p'\
-                    \ present in context [locked]")
-              , (_, "because of call to 'requires_lock',\
-                    \ need permission 'locked' for variable 'p'\
-                    \ not present in context []")
-              ]
-              -> True
+            [(_, "restriction 'has(baz) -> !lacks(baz)' violated in 'bar'\
+                 \ with permissions '[lacks(baz),has(baz)]' before first call")] -> True
             _ -> False
 
 defArgs :: Args
@@ -233,6 +202,11 @@ wardTest args check = do
   parseResults <- forM (Args.translationUnitPaths args)
     $ parseCFile preprocessor temporaryDirectory
     $ Args.preprocessorFlags args
+  config <- do
+    parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
+    case sequence parsedConfigs of
+      Right configs -> pure $ mconcat configs
+      Left parseError -> error $ "bad config in test: " ++ show parseError
   let
     implicitPermissions = Set.fromList
       $ map (PermissionName . Text.pack)
@@ -242,7 +216,23 @@ wardTest args check = do
     Right translationUnits -> do
       entriesChan <- newChan
       flip runLogger entriesChan $ do
-        let quiet = False
+        let
+          implicitPermissions = Set.fromList
+            $ map (PermissionName . Text.pack)
+            $ Args.implicitPermissions args
+          callMap = Graph.fromTranslationUnits implicitPermissions
+            (zip (Args.translationUnitPaths args) translationUnits)
+          functions = map
+            (\ (name, (pos, calls, permissions)) -> Function
+              { functionPos = pos
+              , functionName = nameFromIdent name
+              , functionPermissions = permissions
+              , functionCalls = nameFromIdent <$> calls
+              })
+            $ Map.toList callMap
+            where
+              nameFromIdent (Ident name _ _) = Text.pack name
+        Permissions.process functions config
         endLog
       entries <- map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)
