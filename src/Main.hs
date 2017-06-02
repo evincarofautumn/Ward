@@ -8,7 +8,6 @@ import Config
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless, when)
-import Control.Monad.IO.Class (liftIO)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
@@ -75,7 +74,7 @@ main = do
             $ Map.toList callMap
             where
               nameFromIdent (Ident name _ _) = Text.pack name
-        liftIO $ Permissions.process functions config
+        Permissions.process functions config
         endLog
 
       let

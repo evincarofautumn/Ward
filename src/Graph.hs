@@ -315,10 +315,10 @@ extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runL
     other -> mzero
   action <- case actionName of
     "need" -> return Needs
-    -- "deny" -> return Deny
+    "deny" -> return Denies
     "grant" -> return Grants
     "revoke" -> return Revokes
-    -- "waive" -> return Waive
+    "waive" -> return Waives
     -- FIXME: Report unknown permission action.
     _ -> mzero
   -- FIXME: Use mSubject

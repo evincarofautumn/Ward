@@ -11,6 +11,7 @@ module Check.Permissions
 
 import Config
 import Control.Monad (unless, when)
+import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (for_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
@@ -22,7 +23,6 @@ import Data.These
 import Data.Vector.Mutable (IOVector)
 import Language.C.Data.Node (NodeInfo, posOfNode)
 import Language.C.Data.Position (posFile)
-import System.IO (hPutStrLn, stderr)
 import Types
 import qualified Data.Graph as Graph
 import qualified Data.HashSet as HashSet
@@ -46,6 +46,7 @@ data Node = Node
   -- before and after each call.
   , nodeSites :: !(IOVector Site)
   , nodeName :: !FunctionName
+  , nodePos :: !NodeInfo
   }
 
 type Site = PermissionPresenceSet
@@ -60,7 +61,7 @@ data Function = Function
   , functionCalls :: !(CallTree FunctionName)
   }
 
-process :: [Function] -> Config -> IO ()
+process :: [Function] -> Config -> Logger ()
 process functions config = do
 
   -- Get permissions from functions that require annotations.
@@ -95,7 +96,7 @@ process functions config = do
       ]
 
   -- Build call graph.
-  edges <- edgesFromFunctions functions
+  edges <- liftIO $ edgesFromFunctions functions
   let
     callerGraph :: Graph
     graphLookup :: Graph.Vertex -> (Node, FunctionName, [FunctionName])
@@ -109,7 +110,7 @@ process functions config = do
     sccs = Graph.dfs calleeGraph topologicallySorted
 
   -- Propagate permission information through the graph.
-  for_ sccs $ \ scc -> do
+  liftIO $ for_ sccs $ \ scc -> do
     -- while permissions are growing:
     growing <- newIORef True
     fix $ \ loop -> do
@@ -125,14 +126,17 @@ process functions config = do
         permissionActions <- readIORef $ nodePermissions node
         for_ (HashSet.toList permissionActions) $ \ permissionAction -> do
 
-          flip (IOVector.modify sites) 0 $ (<>) . site $ case permissionAction of
-            -- if a function needs or revokes a permission, then its first call
+          flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
+            -- If a function needs or revokes a permission, then its first call
             -- site must have that permission.
-            Needs p -> Has p
-            Revokes p -> Has p
-            -- if a function grants a permission, then its first call site must
-            -- lack that permission.
-            Grants p -> Lacks p
+            Needs p -> site $ Has p
+            Revokes p -> site $ Has p
+            -- If a function grants or denies a permission, then its first call
+            -- site must lack that permission.
+            Grants p -> site $ Lacks p
+            Denies p -> site $ Lacks p
+            -- FIXME: Verify this.
+            Waives p -> mempty
 
         -- for each sequential statement in function:
         let
@@ -191,6 +195,10 @@ process functions config = do
                 Needs p -> do
                   IOVector.modify v (<> site (Has p)) i
 
+                -- If a call denies a permission, its call site must lack it.
+                Denies p -> do
+                  IOVector.modify v (<> site (Lacks p)) i
+
                 -- If a call grants a permission, its call site must lack it, and
                 -- the following call site must have it.
                 Grants p -> do
@@ -202,6 +210,9 @@ process functions config = do
                 Revokes p -> do
                   IOVector.modify v (<> site (Has p)) i
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
+
+                -- FIXME: Verify this.
+                Waives p -> pure ()
 
           processCallTree Nop _ _ = pure ()
 
@@ -216,8 +227,11 @@ process functions config = do
               relevantPermissions = nub $ map presencePermission
                 $ HashSet.toList initial <> HashSet.toList final
 
+            -- The seemingly redundant side conditions here prevent spurious
+            -- error messages from inconsistent permissions.
+
             for_ relevantPermissions $ \ p -> do
-              when (Has p `HashSet.member` initial) $ do
+              when (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial)) $ do
 
                 -- When the initial state has a permission, the function needs
                 -- that permission.
@@ -225,13 +239,19 @@ process functions config = do
 
                 -- When the initial state has a permission but the final state
                 -- lacks it, the function revokes that permission.
-                when (Lacks p `HashSet.member` final) $ do
+                when (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final)) $ do
                   modifyIORef' permissionRef $ HashSet.insert $ Revokes p
 
-              when (Lacks p `HashSet.member` initial && Has p `HashSet.member` final) $ do
+              when (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial)) $ do
+
+                -- When the initial state lacks a permission, the function
+                -- denies that permission.
+                modifyIORef' permissionRef $ HashSet.insert $ Needs p
+
                 -- When the initial state lacks a permission but the final state
                 -- has it, the function grants that permission.
-                modifyIORef' permissionRef $ HashSet.insert $ Grants p
+                when (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
+                  modifyIORef' permissionRef $ HashSet.insert $ Grants p
 
             modifiedSize <- HashSet.size <$> readIORef permissionRef
 
@@ -255,8 +275,9 @@ process functions config = do
       let
         (node, _name, _incoming) = graphLookup vertex
         name = nodeName node
-      annotations <- readIORef $ nodeAnnotations node
-      permissions <- readIORef $ nodePermissions node
+        pos = nodePos node
+      annotations <- liftIO $ readIORef $ nodeAnnotations node
+      permissions <- liftIO $ readIORef $ nodePermissions node
 
       -- If a function has required annotations, ensure the annotation
       -- mentions all inferred permissions.
@@ -264,13 +285,13 @@ process functions config = do
         -- I think this should generally be equal to 'inferredNotDeclared'.
         let implicit = HashSet.difference permissions userAnnotated
         unless (HashSet.null implicit) $ do
-          hPutStrLn stderr $ strConcat
+          record True $ Error pos $ Text.concat
             [ "missing required annotation on '"
-            , Text.unpack name
+            , name
             , "'; annotation "
-            , show $ HashSet.toList userAnnotated
+            , Text.pack $ show $ HashSet.toList userAnnotated
             , " is missing: "
-            , show $ HashSet.toList implicit
+            , Text.pack $ show $ HashSet.toList implicit
             ]
 
       unless (HashSet.null annotations) $ do
@@ -278,11 +299,11 @@ process functions config = do
 
         -- Annotations, if present, must mention all inferred permissions.
         unless (HashSet.null inferredNotDeclared) $ do
-          hPutStrLn stderr $ strConcat
+          record True $ Error pos $ Text.concat
             [ "annotation on '"
-            , Text.unpack name
+            , name
             , "' is missing these permissions: "
-            , show $ HashSet.toList inferredNotDeclared
+            , Text.pack $ show $ HashSet.toList inferredNotDeclared
             ]
         -- The inferred type must be consistent.
         for_ (HashSet.toList permissions) $ \ permission -> do
@@ -296,30 +317,30 @@ process functions config = do
                 -> Just (Revokes p)
               _ -> Nothing
           flip (maybe (pure ())) mInconsistency $ \ inconsistency -> do
-            hPutStrLn stderr $ strConcat
+            record True $ Error pos $ Text.concat
               [ "inferred inconsistent permissions for '"
-              , Text.unpack name
+              , name
               , "': "
-              , show permission
+              , Text.pack $ show permission
               , " is incompatible with "
-              , show inconsistency
+              , Text.pack $ show inconsistency
               ]
 
       -- There should be no contradictory information at call sites.
       -- TODO: Generalize to any restriction.
-      sites <- Vector.freeze $ nodeSites node
+      sites <- liftIO $ Vector.freeze $ nodeSites node
       for_ (zip [0 :: Int ..] (Vector.toList sites)) $ \ (index, s) -> do
         -- Precondition: has(P) always implies !lacks(P) and vice versa.
         let implicitRestrictions = [Has p `Implies` Not (Context (Lacks p)) | Has p <- HashSet.toList s]
         for_ (implicitRestrictions <> restrictions) $ \ restriction -> do
           unless (evalRestriction s restriction) $ do
-            hPutStrLn stderr $ strConcat $
+            record True $ Error pos $ Text.concat $
               [ "restriction '"
-              , show restriction
+              , Text.pack $ show restriction
               , "' violated in '"
-              , Text.unpack name
+              , name
               , "' with permissions '"
-              , show $ HashSet.toList s
+              , Text.pack $ show $ HashSet.toList s
               , "' "
               ]
               <> case index of
@@ -347,6 +368,7 @@ edgesFromFunctions functions = do
           , nodeCalls = functionCalls function
           , nodeSites = sites
           , nodeName = name
+          , nodePos = functionPos function
           }
         , name
         , toList $ functionCalls function
