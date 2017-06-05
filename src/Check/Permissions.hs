@@ -109,6 +109,15 @@ process functions config = do
     topologicallySorted = Graph.topSort calleeGraph
     sccs = Graph.dfs calleeGraph topologicallySorted
 
+    -- All functions are implicitly annotated with all permissions that are
+    -- declared "implicit" in the config, unless waived by an annotation.
+    implicitPermissions :: [PermissionName]
+    implicitPermissions =
+      [ name
+      | (name, decl) <- Map.toList $ configDeclarations config
+      , declImplicit decl
+      ]
+
   -- Propagate permission information through the graph.
   liftIO $ for_ sccs $ \ scc -> do
     -- while permissions are growing:
@@ -122,9 +131,15 @@ process functions config = do
           (node, name, _incoming) = graphLookup vertex
           sites = nodeSites node
 
-        -- for each permission action in function:
+        -- For each permission action in function, plus implicit permissions not waived:
         permissionActions <- readIORef $ nodePermissions node
-        for_ (HashSet.toList permissionActions) $ \ permissionAction -> do
+        let
+          implicitPermissionActions =
+            [ Needs p
+            | p <- implicitPermissions
+            , not $ Waives p `HashSet.member` permissionActions
+            ]
+        for_ (HashSet.toList permissionActions <> implicitPermissionActions) $ \ permissionAction -> do
 
           flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
             -- If a function needs or revokes a permission, then its first call
@@ -136,7 +151,7 @@ process functions config = do
             Grants p -> site $ Lacks p
             Denies p -> site $ Lacks p
             -- FIXME: Verify this.
-            Waives p -> mempty
+            Waives{} -> mempty
 
         -- for each sequential statement in function:
         let
@@ -212,7 +227,7 @@ process functions config = do
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
 
                 -- FIXME: Verify this.
-                Waives p -> pure ()
+                Waives{} -> pure ()
 
           processCallTree Nop _ _ = pure ()
 

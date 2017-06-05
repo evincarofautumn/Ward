@@ -16,7 +16,6 @@ import Types
 
 data Args = Args
   { configFilePaths :: [FilePath]
-  , implicitPermissions :: [String]
   , outputMode :: !OutputMode
   , preprocessorFlags :: [String]
   , preprocessorPath :: FilePath
@@ -58,13 +57,6 @@ args = runA $ proc () -> do
     [ long "quiet"
     , short 'q'
     , help "Suppress output except for errors."
-    ] -< ()
-
-  implicitPermissions <- opt (many . strOption)
-    [ long "grant"
-    , short 'G'
-    , metavar "PERM"
-    , help "Implicitly grant PERM unless explicitly waived."
     ] -< ()
 
   translationUnitPaths <- opt (some . strArgument)

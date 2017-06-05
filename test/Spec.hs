@@ -24,7 +24,6 @@ import qualified Args
 import qualified Check.Permissions as Permissions
 import qualified Config
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Graph
 
@@ -178,11 +177,22 @@ spec = do
                  \ with permissions '[lacks(baz),has(baz)]' before first call")] -> True
             _ -> False
 
+    it "reports missing implicit permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/missing-implicit-permission.c"]
+        , Args.configFilePaths = ["test/missing-implicit-permission.config"]
+        } $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "missing required annotation on 'foo';\
+                 \ annotation [] is missing: [needs(baz)]")] -> True
+            _ -> False
+
 defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"
   , Args.translationUnitPaths = []
-  , Args.implicitPermissions = []
   , Args.outputMode = CompilerOutput
   , Args.preprocessorFlags = []
   , Args.configFilePaths = []
@@ -207,20 +217,13 @@ wardTest args check = do
     case sequence parsedConfigs of
       Right configs -> pure $ mconcat configs
       Left parseError -> error $ "bad config in test: " ++ show parseError
-  let
-    implicitPermissions = Set.fromList
-      $ map (PermissionName . Text.pack)
-      $ Args.implicitPermissions args
   case sequence parseResults of
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do
       entriesChan <- newChan
       flip runLogger entriesChan $ do
         let
-          implicitPermissions = Set.fromList
-            $ map (PermissionName . Text.pack)
-            $ Args.implicitPermissions args
-          callMap = Graph.fromTranslationUnits implicitPermissions
+          callMap = Graph.fromTranslationUnits config
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
