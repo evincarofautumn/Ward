@@ -4,6 +4,7 @@ module Graph
   ( fromTranslationUnits
   ) where
 
+import Config (Config(..), Declaration(..))
 import Control.Monad (mzero)
 import Control.Monad.Trans.List (ListT(ListT), runListT)
 import Data.Foldable (foldrM)
@@ -20,10 +21,10 @@ import qualified Data.Text as Text
 import Debug.Trace
 
 -- | Builds a call graph from a set of translation units.
-fromTranslationUnits :: implicitPermissions -> [(FilePath, CTranslUnit)] -> CallMap
-fromTranslationUnits _implicitPermissions
+fromTranslationUnits :: Config -> [(FilePath, CTranslUnit)] -> CallMap
+fromTranslationUnits config
   = callMapFromNameMap
-  . nameMapFromTranslationUnit _implicitPermissions
+  . nameMapFromTranslationUnit config
   . joinTranslationUnits
 
 -- | Joins multiple translation units into one.
@@ -77,11 +78,12 @@ prefixStatics path decls = map prefixOne decls
 ----
 
 nameMapFromTranslationUnit
-  :: implicitPermissions -> CTranslUnit -> NameMap
-nameMapFromTranslationUnit _implicitPermissions
+  :: Config -> CTranslUnit -> NameMap
+nameMapFromTranslationUnit config
   (CTranslUnit externalDeclarations _)
   = everything combine (mkQ mempty fromDecl) externalDeclarations
   where
+
     -- Combine name maps, preferring to preserve *declaration* position (if any)
     -- and *definition* body (if any). This allows us to later enforce the
     -- presence of annotations based on file name, e.g., that anything declared

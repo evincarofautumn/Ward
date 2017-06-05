@@ -18,7 +18,6 @@ import Types
 import qualified Args
 import qualified Check.Permissions as Permissions
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 import qualified Data.Text as Text
 import qualified Graph
 
@@ -59,10 +58,7 @@ main = do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
-          implicitPermissions = Set.fromList
-            $ map (PermissionName . Text.pack)
-            $ Args.implicitPermissions args
-          callMap = Graph.fromTranslationUnits implicitPermissions
+          callMap = Graph.fromTranslationUnits config
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
