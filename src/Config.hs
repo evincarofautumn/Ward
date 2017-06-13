@@ -1,18 +1,13 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Config
-  ( Config(..)
-  , Declaration(..)
-  , fromFile
+  ( fromFile
   , fromSource
-  , query
   ) where
 
 import Control.Monad (mzero, void)
 import Data.Either
-import Data.Map (Map)
 import Data.Monoid -- *
-import Data.Text (Text)
 import Data.These
 import Text.Parsec
 import Text.Parsec.String
@@ -36,40 +31,6 @@ import qualified Data.Text as Text
 -- <name>            ::= /[A-Za-z_][0-9A-Za-z_]*/ <ws>
 -- <string>          ::= /"([^"]|\\[\\"])*"/ <ws>
 -- <ws>              ::= /([\t\n\r ]|//[^\n]*$)*/
-
-data Declaration = Declaration
-  { declImplicit :: !Bool
-  , declDescription :: !(Maybe Description)
-  , declRestrictions :: [(Expression, Maybe Description)]
-  } deriving (Eq, Show)
-
-instance Monoid Declaration where
-  mempty = Declaration False Nothing mempty
-  mappend a b = Declaration
-    { declImplicit = declImplicit a || declImplicit b
-    , declDescription = case (declDescription a, declDescription b) of
-      (Just da, Just db) -> Just (da <> "; " <> db)
-      (da@Just{}, Nothing) -> da
-      (Nothing, db@Just{}) -> db
-      _ -> Nothing
-    , declRestrictions = declRestrictions a <> declRestrictions b
-    }
-
-data Config = Config
-  { configDeclarations :: !(Map PermissionName Declaration)
-  , configEnforcements :: [Enforcement]
-  } deriving (Eq, Show)
-
-instance Monoid Config where
-  mempty = Config mempty mempty
-  mappend (Config declA enfA) (Config declB enfB) = Config
-    (Map.unionWith (<>) declA declB)
-    (enfA <> enfB)
-
-query :: PermissionName -> Config -> Maybe Declaration
-query p (Config c _) = Map.lookup p c
-
-type Description = Text
 
 fromFile :: FilePath -> IO (Either ParseError Config)
 fromFile path = fromSource path <$> readFile path

@@ -6,8 +6,8 @@ module Main
 
 import Args (Args(Args))
 import Check.Permissions (Function(..))
-import Config (Config(..), Declaration(Declaration))
 import Control.Concurrent.Chan (getChanContents, newChan)
+import Data.List (nub)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
 import Data.These
@@ -62,7 +62,7 @@ spec = do
         "perm1 implicit;"
         $ Right $ mempty
         { configDeclarations = Map.singleton "perm1"
-          mempty { Config.declImplicit = True }
+          mempty { declImplicit = True }
         }
 
     it "accepts permission declaration with description" $ do
@@ -70,7 +70,7 @@ spec = do
         "perm1 \"permission the first\";"
         $ Right $ mempty
         { configDeclarations = Map.singleton "perm1"
-          mempty { Config.declDescription = Just "permission the first" }
+          mempty { declDescription = Just "permission the first" }
         }
 
     it "accepts multiple permission declarations" $ do
@@ -173,8 +173,10 @@ spec = do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [(_, "restriction 'has(baz) -> !lacks(baz)' violated in 'bar'\
-                 \ with permissions '[lacks(baz),has(baz)]' before first call")] -> True
+            -- with permissions '[lacks(baz),has(baz)]' 
+            [(_, "restriction \"cannot both have and lack a permission\"\
+                 \ (has(baz) -> !lacks(baz)) violated in 'bar'\
+                 \ before first call")] -> True
             _ -> False
 
     it "reports missing implicit permission" $ do
@@ -187,6 +189,41 @@ spec = do
           $ case errors of
             [(_, "missing required annotation on 'foo';\
                  \ annotation [] is missing: [needs(baz)]")] -> True
+            _ -> False
+
+    it "reports descriptions of violated restrictions" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/violated-restriction.c"]
+        , Args.configFilePaths = ["test/violated-restriction.config"]
+        } $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [ ( _
+                , "restriction \"cannot take foo lock while bar lock is held\"\
+                  \ (has(lock_foo) -> !has(bar_locked)) violated\
+                  \ in 'locks_wrong_nesting' at \"lock_bar\""
+                )
+              , ( _
+                , "restriction \"cannot take foo lock while bar lock is held\"\
+                  \ (has(lock_foo) -> !has(bar_locked)) violated\
+                  \ in 'locks_wrong_nesting' at \"unlock_foo\""
+                )
+              , ( _
+                , "restriction \"cannot take foo lock recursively\"\
+                  \ (has(lock_foo) -> !has(foo_locked)) violated\
+                  \ in 'locks_foo_recursively' at \"lock_foo\""
+                )
+              , ( _
+                , "restriction \"cannot take foo lock recursively\"\
+                  \ (has(lock_foo) -> !has(foo_locked)) violated\
+                  \ in 'locks_foo_recursively' at \"unlock_foo\""
+                )
+              , ( _
+                , "missing required annotation on 'missing_foo_locked';\
+                  \ annotation [] is missing: [needs(foo_locked)]"
+                )
+              ] -> True
             _ -> False
 
 defArgs :: Args
@@ -237,5 +274,5 @@ wardTest args check = do
               nameFromIdent (Ident name _ _) = Text.pack name
         Permissions.process functions config
         endLog
-      entries <- map fromJust . takeWhile isJust <$> getChanContents entriesChan
+      entries <- nub . map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)

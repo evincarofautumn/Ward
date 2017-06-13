@@ -4,7 +4,6 @@ module Graph
   ( fromTranslationUnits
   ) where
 
-import Config (Config(..), Declaration(..))
 import Control.Monad (mzero)
 import Control.Monad.Trans.List (ListT(ListT), runListT)
 import Data.Foldable (foldrM)
