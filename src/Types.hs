@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Types where
 
@@ -21,6 +22,7 @@ import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
+import qualified Data.Map as Map
 import qualified Data.Text as Text
 
 type FunctionName = Text
@@ -54,10 +56,17 @@ callTreeBreadth Choice{} = 1  -- Not sure if this is correct.
 callTreeBreadth Call{} = 1
 callTreeBreadth Nop = 0
 
+callTreeIndex :: Int -> CallTree a -> CallTree a
+callTreeIndex index tree = breadthFirst tree !! index
+  where
+    breadthFirst (Sequence a b) = breadthFirst a <> breadthFirst b
+    breadthFirst t = [t]
+
 data Entry
   = Note !NodeInfo !Text
   | Warning !NodeInfo !Text
   | Error !NodeInfo !Text
+  deriving (Eq)
 
 posPrefix :: NodeInfo -> String
 posPrefix (OnlyPos pos _) = concat
@@ -183,7 +192,11 @@ reasonPos (BecauseCall (Ident _ _ pos)) = pos
 
 type Enforcement = These FilePath FunctionName
 
-data Restriction = !PermissionPresence `Implies` Expression
+data Restriction = Restriction
+  { restCondition :: !PermissionPresence
+  , restExpression :: !Expression
+  , restDescription :: !(Maybe Description)
+  }
 
 data Expression
   = Context !PermissionPresence
@@ -194,13 +207,57 @@ data Expression
 
 infixr 3 `And`
 infixr 2 `Or`
-infixr 1 `Implies`
+
+data Config = Config
+  { configDeclarations :: !(Map PermissionName Declaration)
+  , configEnforcements :: [Enforcement]
+  } deriving (Eq, Show)
+
+type Description = Text
+
+data Declaration = Declaration
+  { declImplicit :: !Bool
+  , declDescription :: !(Maybe Description)
+  , declRestrictions :: [(Expression, Maybe Description)]
+  } deriving (Eq, Show)
+
+instance Monoid Declaration where
+  mempty = Declaration False Nothing mempty
+  mappend a b = Declaration
+    { declImplicit = declImplicit a || declImplicit b
+    , declDescription = case (declDescription a, declDescription b) of
+      (Just da, Just db) -> Just (da <> "; " <> db)
+      (da@Just{}, Nothing) -> da
+      (Nothing, db@Just{}) -> db
+      _ -> Nothing
+    , declRestrictions = declRestrictions a <> declRestrictions b
+    }
+
+instance Monoid Config where
+  mempty = Config mempty mempty
+  mappend (Config declA enfA) (Config declB enfB) = Config
+    (Map.unionWith (<>) declA declB)
+    (enfA <> enfB)
 
 instance IsString Expression where
   fromString = Context . Has . fromString
 
 instance Show Restriction where
-  show (p `Implies` e) = concat [show p, " -> ", show e]
+  show r = case restDescription r of
+    Just desc -> concat
+      [ "\""
+      , Text.unpack desc
+      , "\" ("
+      , implication
+      , ")"
+      ]
+    Nothing -> implication
+    where
+      implication = concat
+        [ show $ restCondition r
+        , " -> "
+        , show $ restExpression r
+        ]
 
 instance Show Expression where
   showsPrec p = \ case

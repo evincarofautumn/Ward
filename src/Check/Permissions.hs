@@ -90,9 +90,13 @@ process functions config = do
 
     -- TODO: Keep full declarations for error reporting.
     restrictions =
-      [ Has name `Implies` expr
+      [ Restriction
+        { restCondition = Has name
+        , restExpression = expr
+        , restDescription = desc
+        }
       | (name, decl) <- Map.toList $ configDeclarations config
-      , (expr, _desc) <- declRestrictions decl
+      , (expr, desc) <- declRestrictions decl
       ]
 
   -- Build call graph.
@@ -182,11 +186,14 @@ process functions config = do
             IOVector.write v i (beforeA <> beforeB)
             IOVector.write v (succ i) (afterA <> afterB)
 
-          processCallTree (Sequence a b) i v = do
-            processCallTree a 0 v
-            processCallTree b (callTreeBreadth a) v
+          processCallTree s@(Sequence a b) i v = do
+            putStrLn $ strConcat ["processing sequence ", show s, " of length ", show (callTreeBreadth a), "+", show (callTreeBreadth b)]
+            processCallTree a i v
+            processCallTree b (i + callTreeBreadth a) v
             -- Assuming sequences are right-associative, if this is the root of
             -- a sequence:
+
+{-
             when (i == 0) $ do
               -- Propagate permissions backward through whole sequence.
               for_ (reverse [1 .. IOVector.length v - 2]) $ \ statement -> do
@@ -196,6 +203,7 @@ process functions config = do
                     $ concatMap (\p -> [Has p, Lacks p])
                     $ map presencePermission
                     $ HashSet.toList before)
+-}
 
           processCallTree (Call call) i v = do
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
@@ -208,26 +216,32 @@ process functions config = do
 
                 -- If a call needs a permission, its call site must have it.
                 Needs p -> do
-                  IOVector.modify v (<> site (Has p)) i
+                  putStrLn $ "has(" ++ show p ++ ")"
+                  IOVector.modify v ((<> site (Has p))) i
 
                 -- If a call denies a permission, its call site must lack it.
                 Denies p -> do
-                  IOVector.modify v (<> site (Lacks p)) i
+                  putStrLn $ "lacks(" ++ show p ++ ")"
+                  IOVector.modify v ((<> site (Lacks p))) i
 
                 -- If a call grants a permission, its call site must lack it, and
                 -- the following call site must have it.
                 Grants p -> do
-                  IOVector.modify v (<> site (Lacks p)) i
+                  putStrLn $ "lacks(" ++ show p ++ ") -> has(" ++ show p ++ ")"
+                  IOVector.modify v ((<> site (Lacks p))) i
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
                 -- If a call revokes a permission, its call site must have it, and
                 -- the following call site must lack it.
                 Revokes p -> do
-                  IOVector.modify v (<> site (Has p)) i
+                  putStrLn $ "has(" ++ show p ++ ") -> lacks(" ++ show p ++ ")"
+                  IOVector.modify v ((<> site (Has p))) i
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
 
                 -- FIXME: Verify this.
                 Waives{} -> pure ()
+
+            print =<< Vector.freeze v
 
           processCallTree Nop _ _ = pure ()
 
@@ -261,7 +275,7 @@ process functions config = do
 
                 -- When the initial state lacks a permission, the function
                 -- denies that permission.
-                modifyIORef' permissionRef $ HashSet.insert $ Needs p
+                -- modifyIORef' permissionRef $ HashSet.insert $ Denies p
 
                 -- When the initial state lacks a permission but the final state
                 -- has it, the function grants that permission.
@@ -277,8 +291,14 @@ process functions config = do
             -- TODO: Limit the number of iterations to prevent infinite loops.
             pure $ modifiedSize > currentSize
 
+        putStrLn $ "BEGIN call tree processing"
         processCallTree callVertices 0 sites
+        putStrLn $ "END call tree processing"
         writeIORef growing =<< permissionsFromCallSites (nodePermissions node) sites
+        do
+          perms <- readIORef $ nodePermissions node
+          sites' <- Vector.freeze sites
+          liftIO $ putStrLn $ strConcat ["inferred permissions ", show perms, " for ", Text.unpack name, " with call sites ", show sites']
 
       do
         shouldContinue <- readIORef growing
@@ -346,25 +366,33 @@ process functions config = do
       sites <- liftIO $ Vector.freeze $ nodeSites node
       for_ (zip [0 :: Int ..] (Vector.toList sites)) $ \ (index, s) -> do
         -- Precondition: has(P) always implies !lacks(P) and vice versa.
-        let implicitRestrictions = [Has p `Implies` Not (Context (Lacks p)) | Has p <- HashSet.toList s]
+        let
+          implicitRestrictions =
+            [ Restriction
+              { restCondition = Has p
+              , restExpression = Not (Context (Lacks p))
+              , restDescription = Just "cannot both have and lack a permission"
+              }
+            | Has p <- HashSet.toList s
+            ]
         for_ (implicitRestrictions <> restrictions) $ \ restriction -> do
           unless (evalRestriction s restriction) $ do
             record True $ Error pos $ Text.concat $
-              [ "restriction '"
+              [ "restriction "
               , Text.pack $ show restriction
-              , "' violated in '"
+              , " violated in '"
               , name
+              {-
               , "' with permissions '"
               , Text.pack $ show $ HashSet.toList s
+              -}
               , "' "
               ]
               <> case index of
                 0 -> ["before first call"]
                 _ ->
-                  [ "at call to "
-                  , "TODO: function name"
-                    {- intercalate "/" $ map (("'" <>) . (<> "'") . Text.unpack) $ Vector.toList
-                      $ nodeCalls node Vector.! (index - 1) -}
+                  [ "at "
+                  , Text.pack $ show $ callTreeIndex (index - 1) $ nodeCalls node
                   ]
 
 edgesFromFunctions :: [Function] -> IO [(Node, FunctionName, [FunctionName])]
@@ -395,8 +423,8 @@ strConcat :: [String] -> String
 strConcat = concat
 
 evalRestriction :: PermissionPresenceSet -> Restriction -> Bool
-evalRestriction context (p `Implies` e)
-  | p `HashSet.member` context = go e
+evalRestriction context restriction
+  | restCondition restriction `HashSet.member` context = go $ restExpression restriction
   | otherwise = True
   where
     go = \ case

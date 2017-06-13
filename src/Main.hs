@@ -74,18 +74,21 @@ main = do
         endLog
 
       let
-        loop !warnings !errors = do
+        loop !warnings !errors seen = do
           message <- readChan entriesChan
           case message of
             Nothing -> return (warnings, errors)
-            Just entry -> do
+            Just entry
+              | entry `elem` seen -> loop warnings errors seen
+              | otherwise -> do
               putStrLn $ format (Args.outputMode args) entry
+              let seen' = entry : seen
               case entry of
-                Note{} -> loop warnings errors
-                Warning{} -> loop (warnings + 1) errors
-                Error{} -> loop warnings (errors + 1)
+                Note{} -> loop warnings errors seen'
+                Warning{} -> loop (warnings + 1) errors seen'
+                Error{} -> loop warnings (errors + 1) seen'
 
-      (warnings, errors) <- loop (0 :: Int) (0 :: Int)
+      (warnings, errors) <- loop (0 :: Int) (0 :: Int) []
 
       putStr $ formatFooter (Args.outputMode args) $ concat
         [ "Warnings: ", show warnings
