@@ -193,7 +193,6 @@ process functions config = do
             -- Assuming sequences are right-associative, if this is the root of
             -- a sequence:
 
-{-
             when (i == 0) $ do
               -- Propagate permissions backward through whole sequence.
               for_ (reverse [1 .. IOVector.length v - 2]) $ \ statement -> do
@@ -203,39 +202,60 @@ process functions config = do
                     $ concatMap (\p -> [Has p, Lacks p])
                     $ map presencePermission
                     $ HashSet.toList before)
--}
 
           processCallTree (Call call) i v = do
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
 
-            -- Propagate permissions forward.
-            IOVector.write v (succ i) =<< IOVector.read v i
+            -- Propagate non-conflicting permissions forward.
+            IOVector.write v (succ i)
+              . HashSet.filter (not . conflicting)
+              =<< IOVector.read v i
+
+            -- Update permission presence (has/lacks/conflicts) according to
+            -- permission actions (needs/denies/grants/revokes).
             for_ (HashSet.toList callPermissions) $ \ callPermission -> do
               case callPermission of
 
-                -- If a call needs a permission, its call site must have it.
+                -- If a call needs (resp. denies) a permission, its call site
+                -- must have (lack) it. If the call site already lacks (has) it,
+                -- we record the conflict.
+
                 Needs p -> do
                   putStrLn $ "has(" ++ show p ++ ")"
-                  IOVector.modify v ((<> site (Has p))) i
+                  current <- IOVector.read v i
+                  if Lacks p `HashSet.member` current
+                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    else IOVector.modify v (<> site (Has p)) i
 
-                -- If a call denies a permission, its call site must lack it.
                 Denies p -> do
                   putStrLn $ "lacks(" ++ show p ++ ")"
-                  IOVector.modify v ((<> site (Lacks p))) i
+                  current <- IOVector.read v i
+                  if Has p `HashSet.member` current
+                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                    else IOVector.modify v ((<> site (Lacks p))) i
 
-                -- If a call grants a permission, its call site must lack it, and
-                -- the following call site must have it.
+                -- If a call grants (resp. revokes) a permission, its call site
+                -- must lack (have) it, and the following call site must have
+                -- (lack) it. If the current call site already has (lacks) it,
+                -- we record the conflict. But if the following call site
+                -- already lacks (has) it, we replace it to reflect the change
+                -- in permission state.
+
                 Grants p -> do
                   putStrLn $ "lacks(" ++ show p ++ ") -> has(" ++ show p ++ ")"
-                  IOVector.modify v ((<> site (Lacks p))) i
+                  current <- IOVector.read v i
+                  if Has p `HashSet.member` current
+                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                    else IOVector.modify v ((<> site (Lacks p))) i
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
-                -- If a call revokes a permission, its call site must have it, and
-                -- the following call site must lack it.
                 Revokes p -> do
                   putStrLn $ "has(" ++ show p ++ ") -> lacks(" ++ show p ++ ")"
-                  IOVector.modify v ((<> site (Has p))) i
+                  current <- IOVector.read v i
+                  if Lacks p `HashSet.member` current
+                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    else IOVector.modify v ((<> site (Has p))) i
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
 
                 -- FIXME: Verify this.
@@ -362,20 +382,29 @@ process functions config = do
               ]
 
       -- There should be no contradictory information at call sites.
-      -- TODO: Generalize to any restriction.
       sites <- liftIO $ Vector.freeze $ nodeSites node
+
+       -- Report call sites with conflicting information.
+      let conflicts = HashSet.filter conflicting $ mconcat $ Vector.toList sites
+      unless (HashSet.null conflicts) $ do
+        record True $ Error pos $ Text.concat $
+          [ "conflicting information for permissions "
+          , Text.pack $ show $ HashSet.toList conflicts
+          , " in '"
+          , name
+          , "'"
+          ]
+
       for_ (zip [0 :: Int ..] (Vector.toList sites)) $ \ (index, s) -> do
-        -- Precondition: has(P) always implies !lacks(P) and vice versa.
         let
-          implicitRestrictions =
-            [ Restriction
-              { restCondition = Has p
-              , restExpression = Not (Context (Lacks p))
-              , restDescription = Just "cannot both have and lack a permission"
-              }
-            | Has p <- HashSet.toList s
-            ]
-        for_ (implicitRestrictions <> restrictions) $ \ restriction -> do
+          position = case index of
+            0 -> ["before first call"]
+            _ ->
+              [ "at "
+              , Text.pack $ show $ callTreeIndex (index - 1) $ nodeCalls node
+              ]
+        -- Report violated restrictions.
+        for_ (restrictions) $ \ restriction -> do
           unless (evalRestriction s restriction) $ do
             record True $ Error pos $ Text.concat $
               [ "restriction "
@@ -388,12 +417,7 @@ process functions config = do
               -}
               , "' "
               ]
-              <> case index of
-                0 -> ["before first call"]
-                _ ->
-                  [ "at "
-                  , Text.pack $ show $ callTreeIndex (index - 1) $ nodeCalls node
-                  ]
+              <> position
 
 edgesFromFunctions :: [Function] -> IO [(Node, FunctionName, [FunctionName])]
 edgesFromFunctions functions = do
@@ -428,8 +452,13 @@ evalRestriction context restriction
   | otherwise = True
   where
     go = \ case
-      Context p' -> p' `HashSet.member` context
+      -- Since 'Conflicts' represents both 'Has' and 'Lacks', it matches both.
+      Context p -> p `HashSet.member` context
+        || Conflicts (presencePermission p) `HashSet.member` context
       a `And` b -> go a && go b
       a `Or` b -> go a || go b
       Not a -> not $ go a
        
+conflicting :: PermissionPresence -> Bool
+conflicting Conflicts{} = True
+conflicting _ = False

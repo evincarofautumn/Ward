@@ -172,6 +172,7 @@ type PermissionActionSet = HashSet PermissionAction
 data PermissionPresence
   = Has !PermissionName
   | Lacks !PermissionName
+  | Conflicts !PermissionName
   deriving (Eq, Generic, Ord)
 
 type PermissionPresenceSet = HashSet PermissionPresence
@@ -180,6 +181,7 @@ presencePermission :: PermissionPresence -> PermissionName
 presencePermission = \ case
   Has p -> p
   Lacks p -> p
+  Conflicts p -> p
 
 -- | Why a particular permission action is being applied.
 data Reason
@@ -295,5 +297,6 @@ instance Show PermissionPresence where
   show = \ case
     Has p -> concat ["has(", show p, ")"]
     Lacks p -> concat ["lacks(", show p, ")"]
+    Conflicts p -> concat ["conflicts(", show p, ")"]
 
 instance Hashable PermissionPresence
