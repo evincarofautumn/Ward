@@ -159,19 +159,12 @@ process functions config = do
 
         -- for each sequential statement in function:
         let
-          callVertices = vertexFromName <$> nodeCalls node
-          vertexFromName n = fromMaybe
-            (error $ strConcat
-              [ "missing graph node for function '"
-              , Text.unpack n
-              , "'"
-              ])
-            $ graphVertex n
+          callVertices = graphVertex <$> nodeCalls node
 
           processCallTree
-            :: CallTree Graph.Vertex  -- input
-            -> Int                    -- offset within current sequence
-            -> IOVector Site          -- current sequence
+            :: CallTree (Maybe Graph.Vertex)  -- input
+            -> Int                            -- offset within current sequence
+            -> IOVector Site                  -- current sequence
             -> IO ()
 
           processCallTree (Choice a b) i v = do
@@ -202,7 +195,7 @@ process functions config = do
                     $ map presencePermission
                     $ HashSet.toList before)
 
-          processCallTree (Call call) i v = do
+          processCallTree (Call (Just call)) i v = do
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
 
@@ -256,6 +249,9 @@ process functions config = do
                 -- FIXME: Verify this.
                 Waives{} -> pure ()
 
+          -- Assume an unknown call has irrelevant permissions. I just know this
+          -- is going to bite me later.
+          processCallTree (Call Nothing) _ _ = pure ()
           processCallTree Nop _ _ = pure ()
 
           permissionsFromCallSites :: IORef PermissionActionSet -> IOVector Site -> IO Bool
