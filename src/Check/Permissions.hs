@@ -187,7 +187,6 @@ process functions config = do
             IOVector.write v (succ i) (afterA <> afterB)
 
           processCallTree s@(Sequence a b) i v = do
-            putStrLn $ strConcat ["processing sequence ", show s, " of length ", show (callTreeBreadth a), "+", show (callTreeBreadth b)]
             processCallTree a i v
             processCallTree b (i + callTreeBreadth a) v
             -- Assuming sequences are right-associative, if this is the root of
@@ -222,14 +221,12 @@ process functions config = do
                 -- we record the conflict.
 
                 Needs p -> do
-                  putStrLn $ "has(" ++ show p ++ ")"
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v (<> site (Has p)) i
 
                 Denies p -> do
-                  putStrLn $ "lacks(" ++ show p ++ ")"
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
@@ -243,7 +240,6 @@ process functions config = do
                 -- in permission state.
 
                 Grants p -> do
-                  putStrLn $ "lacks(" ++ show p ++ ") -> has(" ++ show p ++ ")"
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
@@ -251,7 +247,6 @@ process functions config = do
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
                 Revokes p -> do
-                  putStrLn $ "has(" ++ show p ++ ") -> lacks(" ++ show p ++ ")"
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
@@ -260,8 +255,6 @@ process functions config = do
 
                 -- FIXME: Verify this.
                 Waives{} -> pure ()
-
-            print =<< Vector.freeze v
 
           processCallTree Nop _ _ = pure ()
 
@@ -311,14 +304,8 @@ process functions config = do
             -- TODO: Limit the number of iterations to prevent infinite loops.
             pure $ modifiedSize > currentSize
 
-        putStrLn $ "BEGIN call tree processing"
         processCallTree callVertices 0 sites
-        putStrLn $ "END call tree processing"
         writeIORef growing =<< permissionsFromCallSites (nodePermissions node) sites
-        do
-          perms <- readIORef $ nodePermissions node
-          sites' <- Vector.freeze sites
-          liftIO $ putStrLn $ strConcat ["inferred permissions ", show perms, " for ", Text.unpack name, " with call sites ", show sites']
 
       do
         shouldContinue <- readIORef growing
