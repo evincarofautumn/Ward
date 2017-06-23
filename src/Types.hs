@@ -170,18 +170,27 @@ data PermissionAction
 type PermissionActionSet = HashSet PermissionAction
 
 data PermissionPresence
-  = Has !PermissionName
+  = Has !Strength !PermissionName
   | Lacks !PermissionName
   | Conflicts !PermissionName
+  deriving (Eq, Generic, Ord)
+
+-- If a permission is "weakly had", it's present in the context but only used by
+-- a callee. If it's "strongly had", it's required directly.
+data Strength = Weak | Strong
   deriving (Eq, Generic, Ord)
 
 type PermissionPresenceSet = HashSet PermissionPresence
 
 presencePermission :: PermissionPresence -> PermissionName
 presencePermission = \ case
-  Has p -> p
+  Has _ p -> p
   Lacks p -> p
   Conflicts p -> p
+
+isHas :: PermissionPresence -> Bool
+isHas Has{} = True
+isHas _ = False
 
 -- | Why a particular permission action is being applied.
 data Reason
@@ -242,7 +251,7 @@ instance Monoid Config where
     (enfA <> enfB)
 
 instance IsString Expression where
-  fromString = Context . Has . fromString
+  fromString = Context . Has Weak . fromString
 
 instance Show Restriction where
   show r = case restDescription r of
@@ -295,8 +304,11 @@ instance Show Reason where
 
 instance Show PermissionPresence where
   show = \ case
-    Has p -> concat ["has(", show p, ")"]
+    Has Weak p -> concat ["has(", show p, ")"]
+    Has Strong p -> concat ["uses(", show p, ")"]
     Lacks p -> concat ["lacks(", show p, ")"]
     Conflicts p -> concat ["conflicts(", show p, ")"]
 
 instance Hashable PermissionPresence
+
+instance Hashable Strength

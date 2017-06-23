@@ -91,7 +91,7 @@ process functions config = do
     -- TODO: Keep full declarations for error reporting.
     restrictions =
       [ Restriction
-        { restCondition = Has name
+        { restCondition = Has Strong name
         , restExpression = expr
         , restDescription = desc
         }
@@ -148,8 +148,8 @@ process functions config = do
           flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
             -- If a function needs or revokes a permission, then its first call
             -- site must have that permission.
-            Needs p -> site $ Has p
-            Revokes p -> site $ Has p
+            Needs p -> site $ Has Weak p
+            Revokes p -> site $ Has Weak p
             -- If a function grants or denies a permission, then its first call
             -- site must lack that permission.
             Grants p -> site $ Lacks p
@@ -191,7 +191,7 @@ process functions config = do
                 after <- IOVector.read v statement
                 flip (IOVector.modify v) (pred statement) $ \ before
                   -> before <> (foldr HashSet.delete after
-                    $ concatMap (\p -> [Has p, Lacks p])
+                    $ concatMap (\p -> [Has Weak p, Lacks p])
                     $ map presencePermission
                     $ HashSet.toList before)
 
@@ -217,12 +217,14 @@ process functions config = do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v (<> site (Has p)) i
+                    else IOVector.modify v (<> site (Has Weak p)) i
 
                 Denies p -> do
                   current <- IOVector.read v i
-                  if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                  if Has Strong p `HashSet.member` current
+                    then IOVector.modify v
+                      ( (<> site (Conflicts p))
+                      . HashSet.filter (\x -> not $ isHas x && presencePermission x == p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
 
                 -- If a call grants (resp. revokes) a permission, its call site
@@ -234,17 +236,23 @@ process functions config = do
 
                 Grants p -> do
                   current <- IOVector.read v i
-                  if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                  if Has Strong p `HashSet.member` current
+                    then IOVector.modify v
+                      ( (<> site (Conflicts p))
+                      . HashSet.filter
+                        (\ x -> not $ isHas x && presencePermission x == p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
-                  IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
+                  IOVector.modify v ((<> site (Has Weak p)) . HashSet.delete (Lacks p)) $ succ i
 
                 Revokes p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v ((<> site (Has p))) i
-                  IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
+                    else IOVector.modify v ((<> site (Has Weak p))) i
+                  IOVector.modify v
+                    ( (<> site (Lacks p))
+                    . HashSet.filter
+                      (\ x -> not $ isHas x && presencePermission x == p)) $ succ i
 
                 -- FIXME: Verify this.
                 Waives{} -> pure ()
@@ -269,7 +277,7 @@ process functions config = do
             -- error messages from inconsistent permissions.
 
             for_ relevantPermissions $ \ p -> do
-              when (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial)) $ do
+              when (Has Weak p `HashSet.member` initial && not (Lacks p `HashSet.member` initial)) $ do
 
                 -- When the initial state has a permission, the function needs
                 -- that permission.
@@ -277,10 +285,10 @@ process functions config = do
 
                 -- When the initial state has a permission but the final state
                 -- lacks it, the function revokes that permission.
-                when (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final)) $ do
+                when (Lacks p `HashSet.member` final && not (Has Weak p `HashSet.member` final)) $ do
                   modifyIORef' permissionRef $ HashSet.insert $ Revokes p
 
-              when (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial)) $ do
+              when (Lacks p `HashSet.member` initial && not (Has Weak p `HashSet.member` initial)) $ do
 
                 -- When the initial state lacks a permission, the function
                 -- denies that permission.
@@ -288,7 +296,7 @@ process functions config = do
 
                 -- When the initial state lacks a permission but the final state
                 -- has it, the function grants that permission.
-                when (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
+                when (Has Weak p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
                   modifyIORef' permissionRef $ HashSet.insert $ Grants p
 
             modifiedSize <- HashSet.size <$> readIORef permissionRef
