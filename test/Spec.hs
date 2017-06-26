@@ -163,7 +163,7 @@ spec = do
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
             [(_, "missing required annotation on 'bar';\
-                 \ annotation [] is missing: [needs(baz)]")] -> True
+                 \ annotation [] is missing: [need(baz)]")] -> True
             _ -> False
 
     it "reports disallowed permission" $ do
@@ -174,8 +174,7 @@ spec = do
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
             -- with permissions '[lacks(baz),has(baz)]' 
-            [(_, "conflicting information for permissions\
-                 \ [conflicts(baz)] in 'bar'")] -> True
+            [(_, "conflicting information for permissions [baz] in 'bar'")] -> True
             _ -> False
 
     it "reports missing implicit permission" $ do
@@ -187,7 +186,7 @@ spec = do
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
             [(_, "missing required annotation on 'foo';\
-                 \ annotation [] is missing: [needs(baz)]")] -> True
+                 \ annotation [] is missing: [need(baz)]")] -> True
             _ -> False
 
     it "reports descriptions of violated restrictions" $ do
@@ -198,12 +197,11 @@ spec = do
         assertBool
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
-            [ (_, "restriction \"cannot take foo lock while bar lock is held\" (has(lock_foo) -> !has(bar_locked)) violated in 'locks_wrong_nesting' at \"lock_bar\"")
-              , (_, "restriction \"cannot take foo lock while bar lock is held\" (has(lock_foo) -> !has(bar_locked)) violated in 'locks_wrong_nesting' at \"unlock_foo\"")
-              , (_, "conflicting information for permissions [conflicts(lock_foo),conflicts(foo_locked)] in 'locks_foo_recursively'")
-              , (_, "restriction \"cannot take foo lock recursively\" (has(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' before first call")
-              , (_, "restriction \"cannot take foo lock recursively\" (has(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' at \"lock_foo\"")
-              , (_, "missing required annotation on 'missing_foo_locked'; annotation [] is missing: [needs(foo_locked)]")
+            [ (_, "restriction \"cannot take foo lock while bar lock is held\" (uses(lock_foo) -> !has(bar_locked)) violated in 'locks_wrong_nesting' at \"lock_bar\"")
+              , (_, "conflicting information for permissions [foo_locked,lock_foo] in 'locks_foo_recursively'")
+              , (_, "restriction \"cannot take foo lock recursively\" (uses(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' before first call")
+              , (_, "restriction \"cannot take foo lock recursively\" (uses(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' at \"lock_foo\"")
+              , (_, "missing required annotation on 'missing_foo_locked'; annotation [] is missing: [need(foo_locked)]")
               ] -> True
             _ -> False
 
