@@ -315,11 +315,12 @@ extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runL
     -- FIXME: Report malformed permission specifier.
     other -> mzero
   action <- case actionName of
-    "need" -> return Needs
-    "deny" -> return Denies
-    "grant" -> return Grants
-    "revoke" -> return Revokes
-    "waive" -> return Waives
+    "need" -> select [Need]
+    "use" -> select [Need, Use]
+    "deny" -> select [Deny]
+    "grant" -> select [Grant]
+    "revoke" -> select [Revoke]
+    "waive" -> select [Waive]
     -- FIXME: Report unknown permission action.
     _ -> mzero
   -- FIXME: Use mSubject

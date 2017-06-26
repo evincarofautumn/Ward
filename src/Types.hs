@@ -160,17 +160,19 @@ newtype PermissionName = PermissionName Text
 
 -- | A pair of an action and a permission, such as @grant(foo)@.
 data PermissionAction
-  = Needs !PermissionName
-  | Grants !PermissionName
-  | Revokes !PermissionName
-  | Denies !PermissionName
-  | Waives !PermissionName
+  = Need !PermissionName
+  | Use !PermissionName
+  | Grant !PermissionName
+  | Revoke !PermissionName
+  | Deny !PermissionName
+  | Waive !PermissionName
   deriving (Eq, Generic, Ord)
 
 type PermissionActionSet = HashSet PermissionAction
 
 data PermissionPresence
   = Has !PermissionName
+  | Uses !PermissionName
   | Lacks !PermissionName
   | Conflicts !PermissionName
   deriving (Eq, Generic, Ord)
@@ -180,6 +182,7 @@ type PermissionPresenceSet = HashSet PermissionPresence
 presencePermission :: PermissionPresence -> PermissionName
 presencePermission = \ case
   Has p -> p
+  Uses p -> p
   Lacks p -> p
   Conflicts p -> p
 
@@ -280,11 +283,12 @@ instance Show PermissionName where
 
 instance Show PermissionAction where
   show = \ case
-    Needs p -> concat ["needs(", show p, ")"]
-    Grants p -> concat ["grants(", show p, ")"]
-    Revokes p -> concat ["revokes(", show p, ")"]
-    Denies p -> concat ["denies(", show p, ")"]
-    Waives p -> concat ["waives(", show p, ")"]
+    Need p -> concat ["need(", show p, ")"]
+    Use p -> concat ["use(", show p, ")"]
+    Grant p -> concat ["grant(", show p, ")"]
+    Revoke p -> concat ["revoke(", show p, ")"]
+    Deny p -> concat ["deny(", show p, ")"]
+    Waive p -> concat ["waive(", show p, ")"]
 
 instance Hashable PermissionAction
 
@@ -296,6 +300,7 @@ instance Show Reason where
 instance Show PermissionPresence where
   show = \ case
     Has p -> concat ["has(", show p, ")"]
+    Uses p -> concat ["uses(", show p, ")"]
     Lacks p -> concat ["lacks(", show p, ")"]
     Conflicts p -> concat ["conflicts(", show p, ")"]
 

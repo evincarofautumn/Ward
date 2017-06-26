@@ -16,7 +16,7 @@ import Data.Foldable (for_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
-import Data.List (isSuffixOf, nub)
+import Data.List (isSuffixOf, nub, sort)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.These
@@ -88,10 +88,9 @@ process functions config = do
       , requiresAnnotation name info
       ]
 
-    -- TODO: Keep full declarations for error reporting.
     restrictions =
       [ Restriction
-        { restCondition = Has name
+        { restCondition = Uses name
         , restExpression = expr
         , restDescription = desc
         }
@@ -139,23 +138,24 @@ process functions config = do
         permissionActions <- readIORef $ nodePermissions node
         let
           implicitPermissionActions =
-            [ Needs p
+            [ Need p
             | p <- implicitPermissions
-            , not $ Waives p `HashSet.member` permissionActions
+            , not $ Waive p `HashSet.member` permissionActions
             ]
         for_ (HashSet.toList permissionActions <> implicitPermissionActions) $ \ permissionAction -> do
 
           flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
             -- If a function needs or revokes a permission, then its first call
             -- site must have that permission.
-            Needs p -> site $ Has p
-            Revokes p -> site $ Has p
+            Need p -> site $ Has p
+            Use p -> site $ Uses p
+            Revoke p -> site $ Has p
             -- If a function grants or denies a permission, then its first call
             -- site must lack that permission.
-            Grants p -> site $ Lacks p
-            Denies p -> site $ Lacks p
+            Grant p -> site $ Lacks p
+            Deny p -> site $ Lacks p
             -- FIXME: Verify this.
-            Waives{} -> mempty
+            Waive{} -> mempty
 
         -- for each sequential statement in function:
         let
@@ -191,7 +191,7 @@ process functions config = do
                 after <- IOVector.read v statement
                 flip (IOVector.modify v) (pred statement) $ \ before
                   -> before <> (foldr HashSet.delete after
-                    $ concatMap (\p -> [Has p, Lacks p])
+                    $ concatMap (\p -> [Has p, Lacks p, Uses p])
                     $ map presencePermission
                     $ HashSet.toList before)
 
@@ -213,13 +213,19 @@ process functions config = do
                 -- must have (lack) it. If the call site already lacks (has) it,
                 -- we record the conflict.
 
-                Needs p -> do
+                Need p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v (<> site (Has p)) i
 
-                Denies p -> do
+                Use p -> do
+                  current <- IOVector.read v i
+                  if Lacks p `HashSet.member` current
+                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    else IOVector.modify v (<> HashSet.fromList [Has p, Uses p]) i
+
+                Deny p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
@@ -232,14 +238,14 @@ process functions config = do
                 -- already lacks (has) it, we replace it to reflect the change
                 -- in permission state.
 
-                Grants p -> do
+                Grant p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
-                Revokes p -> do
+                Revoke p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
@@ -247,7 +253,7 @@ process functions config = do
                   IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
 
                 -- FIXME: Verify this.
-                Waives{} -> pure ()
+                Waive{} -> pure ()
 
           -- Assume an unknown call has irrelevant permissions. I just know this
           -- is going to bite me later.
@@ -273,12 +279,12 @@ process functions config = do
 
                 -- When the initial state has a permission, the function needs
                 -- that permission.
-                modifyIORef' permissionRef $ HashSet.insert $ Needs p
+                modifyIORef' permissionRef $ HashSet.insert $ Need p
 
                 -- When the initial state has a permission but the final state
                 -- lacks it, the function revokes that permission.
                 when (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final)) $ do
-                  modifyIORef' permissionRef $ HashSet.insert $ Revokes p
+                  modifyIORef' permissionRef $ HashSet.insert $ Revoke p
 
               when (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial)) $ do
 
@@ -289,7 +295,7 @@ process functions config = do
                 -- When the initial state lacks a permission but the final state
                 -- has it, the function grants that permission.
                 when (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
-                  modifyIORef' permissionRef $ HashSet.insert $ Grants p
+                  modifyIORef' permissionRef $ HashSet.insert $ Grant p
 
             modifiedSize <- HashSet.size <$> readIORef permissionRef
 
@@ -347,12 +353,12 @@ process functions config = do
         for_ (HashSet.toList permissions) $ \ permission -> do
           let
             mInconsistency = case permission of
-              Needs p
-                | Grants p `HashSet.member` permissions
-                -> Just (Grants p)
-              Grants p
-                | Revokes p `HashSet.member` permissions
-                -> Just (Revokes p)
+              Need p
+                | Grant p `HashSet.member` permissions
+                -> Just (Grant p)
+              Grant p
+                | Revoke p `HashSet.member` permissions
+                -> Just (Revoke p)
               _ -> Nothing
           flip (maybe (pure ())) mInconsistency $ \ inconsistency -> do
             record True $ Error pos $ Text.concat
@@ -372,7 +378,8 @@ process functions config = do
       unless (HashSet.null conflicts) $ do
         record True $ Error pos $ Text.concat $
           [ "conflicting information for permissions "
-          , Text.pack $ show $ HashSet.toList conflicts
+          , Text.pack $ show $ sort $ map presencePermission
+            $ HashSet.toList conflicts
           , " in '"
           , name
           , "'"

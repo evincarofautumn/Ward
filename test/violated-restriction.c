@@ -1,20 +1,20 @@
 void lock_foo (void)
-	__attribute__ ((ward (need (lock_foo), revoke (lock_foo), grant (foo_locked))));
+	__attribute__ ((ward (use (lock_foo), revoke (lock_foo), grant (foo_locked))));
 
 void unlock_foo (void)
-	__attribute__ ((ward (need (foo_locked), revoke (foo_locked), grant (lock_foo))));
+	__attribute__ ((ward (use (foo_locked), revoke (foo_locked), grant (lock_foo))));
 
 void lock_bar (void)
-	__attribute__ ((ward (need (lock_bar), revoke (lock_bar), grant (bar_locked))));
+	__attribute__ ((ward (use (lock_bar), revoke (lock_bar), grant (bar_locked))));
 
 void unlock_bar (void)
-	__attribute__ ((ward (need (bar_locked), revoke (bar_locked), grant (lock_bar))));
+	__attribute__ ((ward (use (bar_locked), revoke (bar_locked), grant (lock_bar))));
 
 void needs_foo_locked (void)
-	__attribute__ ((ward (need (foo_locked))));
+	__attribute__ ((ward (use (foo_locked))));
 
 void needs_bar_locked (void)
-	__attribute__ ((ward (need (bar_locked))));
+	__attribute__ ((ward (use (bar_locked))));
 
 int missing_foo_locked (void);
 
