@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mono_path="$HOME/Projects/mono"
+mono_path="$HOME/Projects/mono2"
 # profile_flags="+RTS -p -hr -RTS"
 profile_flags=""
 

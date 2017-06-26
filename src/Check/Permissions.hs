@@ -13,8 +13,9 @@ import Config
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (for_, toList)
-import Data.Function (fix)
+import Data.Function (fix, on)
 import Data.Graph (Graph, graphFromEdges)
+import Data.HashSet (HashSet)
 import Data.IORef
 import Data.List (isSuffixOf, nub, sort)
 import Data.Maybe (fromMaybe)
@@ -90,7 +91,7 @@ process functions config = do
 
     restrictions =
       [ Restriction
-        { restCondition = Uses name
+        { restCondition = Uses (maybe NoReason BecauseRestriction desc) name
         , restExpression = expr
         , restDescription = desc
         }
@@ -147,13 +148,13 @@ process functions config = do
           flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
             -- If a function needs or revokes a permission, then its first call
             -- site must have that permission.
-            Need p -> site $ Has p
-            Use p -> site $ Uses p
-            Revoke p -> site $ Has p
+            Need p -> site $ Has NoReason p
+            Use p -> site $ Uses NoReason p
+            Revoke p -> site $ Has NoReason p
             -- If a function grants or denies a permission, then its first call
             -- site must lack that permission.
-            Grant p -> site $ Lacks p
-            Deny p -> site $ Lacks p
+            Grant p -> site $ Lacks NoReason p
+            Deny p -> site $ Lacks NoReason p
             -- FIXME: Verify this.
             Waive{} -> mempty
 
@@ -189,11 +190,9 @@ process functions config = do
               -- Propagate permissions backward through whole sequence.
               for_ (reverse [1 .. IOVector.length v - 2]) $ \ statement -> do
                 after <- IOVector.read v statement
-                flip (IOVector.modify v) (pred statement) $ \ before
-                  -> before <> (foldr HashSet.delete after
-                    $ concatMap (\p -> [Has p, Lacks p, Uses p])
-                    $ map presencePermission
-                    $ HashSet.toList before)
+                flip (IOVector.modify v) (pred statement)
+                  $ \ before -> before
+                    <> HashSet.filter (\ p -> not $ p `HashSet.member` before) after
 
           processCallTree (Call (Just call)) i v = do
             let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
@@ -215,21 +214,21 @@ process functions config = do
 
                 Need p -> do
                   current <- IOVector.read v i
-                  if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v (<> site (Has p)) i
+                  if setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) current
+                    then IOVector.modify v ((<> site (Conflicts NoReason p)) . HashSet.filter (not . \ case { Lacks _ p' | p == p' -> True; _ -> False })) i
+                    else IOVector.modify v (<> site (Has NoReason p)) i
 
                 Use p -> do
                   current <- IOVector.read v i
-                  if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v (<> HashSet.fromList [Has p, Uses p]) i
+                  if setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) current
+                    then IOVector.modify v ((<> site (Conflicts NoReason p)) . HashSet.filter (not . \ case { Lacks _ p' | p == p' -> True; _ -> False })) i
+                    else IOVector.modify v (<> HashSet.fromList [Has NoReason p, Uses NoReason p]) i
 
                 Deny p -> do
                   current <- IOVector.read v i
-                  if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
-                    else IOVector.modify v ((<> site (Lacks p))) i
+                  if setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) current
+                    then IOVector.modify v ((<> site (Conflicts NoReason p)) . HashSet.filter (not . \ case { Has _ p' | p == p' -> True; _ -> False })) i
+                    else IOVector.modify v ((<> site (Lacks NoReason p))) i
 
                 -- If a call grants (resp. revokes) a permission, its call site
                 -- must lack (have) it, and the following call site must have
@@ -240,17 +239,17 @@ process functions config = do
 
                 Grant p -> do
                   current <- IOVector.read v i
-                  if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
-                    else IOVector.modify v ((<> site (Lacks p))) i
-                  IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
+                  if setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) current
+                    then IOVector.modify v ((<> site (Conflicts NoReason p)) . HashSet.filter (not . \ case { Has _ p' | p == p' -> True; _ -> False })) i
+                    else IOVector.modify v ((<> site (Lacks NoReason p))) i
+                  IOVector.modify v ((<> site (Has NoReason p)) . HashSet.filter (not . \ case { Lacks _ p' | p == p' -> True; _ -> False })) $ succ i
 
                 Revoke p -> do
                   current <- IOVector.read v i
-                  if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v ((<> site (Has p))) i
-                  IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
+                  if setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) current
+                    then IOVector.modify v ((<> site (Conflicts NoReason p)) . HashSet.filter (not . \ case { Lacks _ p' | p == p' -> True; _ -> False })) i
+                    else IOVector.modify v ((<> site (Has NoReason p))) i
+                  IOVector.modify v ((<> site (Lacks NoReason p)) . HashSet.filter (not . \ case { Has _ p' | p == p' -> True; _ -> False })) $ succ i
 
                 -- FIXME: Verify this.
                 Waive{} -> pure ()
@@ -275,7 +274,8 @@ process functions config = do
             -- error messages from inconsistent permissions.
 
             for_ relevantPermissions $ \ p -> do
-              when (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial)) $ do
+              when (setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) initial
+                && not (setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) initial)) $ do
 
                 -- When the initial state has a permission, the function needs
                 -- that permission.
@@ -283,10 +283,12 @@ process functions config = do
 
                 -- When the initial state has a permission but the final state
                 -- lacks it, the function revokes that permission.
-                when (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final)) $ do
+                when (setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) final
+                  && not (setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) final)) $ do
                   modifyIORef' permissionRef $ HashSet.insert $ Revoke p
 
-              when (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial)) $ do
+              when (setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) initial
+                && not (setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) initial)) $ do
 
                 -- When the initial state lacks a permission, the function
                 -- denies that permission.
@@ -294,7 +296,8 @@ process functions config = do
 
                 -- When the initial state lacks a permission but the final state
                 -- has it, the function grants that permission.
-                when (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
+                when (setFind (\ case { Has _ p' | p == p' -> True; _ -> False }) final
+                  && not (setFind (\ case { Lacks _ p' | p == p' -> True; _ -> False }) final)) $ do
                   modifyIORef' permissionRef $ HashSet.insert $ Grant p
 
             modifiedSize <- HashSet.size <$> readIORef permissionRef
@@ -443,8 +446,8 @@ evalRestriction context restriction
   where
     go = \ case
       -- Since 'Conflicts' represents both 'Has' and 'Lacks', it matches both.
-      Context p -> p `HashSet.member` context
-        || Conflicts (presencePermission p) `HashSet.member` context
+      Context p -> setFind (((==) `on` presencePermission) p) context
+        || setFind (\ case { Conflicts _ p' | presencePermission p == p' -> True; _ -> False }) context
       a `And` b -> go a && go b
       a `Or` b -> go a || go b
       Not a -> not $ go a
@@ -452,3 +455,6 @@ evalRestriction context restriction
 conflicting :: PermissionPresence -> Bool
 conflicting Conflicts{} = True
 conflicting _ = False
+
+setFind :: (a -> Bool) -> HashSet a -> Bool
+setFind p = not . HashSet.null . HashSet.filter p

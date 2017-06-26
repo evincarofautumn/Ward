@@ -171,29 +171,39 @@ data PermissionAction
 type PermissionActionSet = HashSet PermissionAction
 
 data PermissionPresence
-  = Has !PermissionName
-  | Uses !PermissionName
-  | Lacks !PermissionName
-  | Conflicts !PermissionName
+  = Has !Reason !PermissionName
+  | Uses !Reason !PermissionName
+  | Lacks !Reason !PermissionName
+  | Conflicts !Reason !PermissionName
   deriving (Eq, Generic, Ord)
 
 type PermissionPresenceSet = HashSet PermissionPresence
 
 presencePermission :: PermissionPresence -> PermissionName
 presencePermission = \ case
-  Has p -> p
-  Uses p -> p
-  Lacks p -> p
-  Conflicts p -> p
+  Has _ p -> p
+  Uses _ p -> p
+  Lacks _ p -> p
+  Conflicts _ p -> p
 
 -- | Why a particular permission action is being applied.
 data Reason
-  = NoReason !NodeInfo
+  = NoReason
   | BecauseCall !Ident
+  | BecauseRestriction !Description
+  | BecauseBoth !Reason !Reason
+  deriving (Eq, Generic, Ord)
 
-reasonPos :: Reason -> NodeInfo
-reasonPos (NoReason pos) = pos
-reasonPos (BecauseCall (Ident _ _ pos)) = pos
+instance Hashable Reason where
+  hashWithSalt s NoReason = hashWithSalt s (0 :: Int)
+  hashWithSalt s (BecauseCall (Ident name _ _)) = hashWithSalt s (1 :: Int, name)
+  hashWithSalt s (BecauseRestriction desc) = hashWithSalt s (2 :: Int, desc)
+  hashWithSalt s (BecauseBoth r1 r2) = hashWithSalt s (3 :: Int, r1, r2)
+
+reasonPos :: Reason -> [NodeInfo]
+reasonPos NoReason = []
+reasonPos (BecauseCall (Ident _ _ pos)) = [pos]
+reasonPos (BecauseBoth r1 r2) = concatMap reasonPos [r1, r2]
 
 type Enforcement = These FilePath FunctionName
 
@@ -245,7 +255,7 @@ instance Monoid Config where
     (enfA <> enfB)
 
 instance IsString Expression where
-  fromString = Context . Has . fromString
+  fromString = Context . Has NoReason . fromString
 
 instance Show Restriction where
   show r = case restDescription r of
@@ -294,14 +304,15 @@ instance Hashable PermissionAction
 
 instance Show Reason where
   show = \ case
-    NoReason _ -> "unspecified reason"
-    BecauseCall (Ident name _ _) -> concat ["call to '", name, "'"]
+    NoReason -> "of unspecified reason"
+    BecauseCall (Ident name _ _) -> concat ["of call to '", name, "'"]
+    BecauseBoth r1 r2 -> concat [show r1, " and ", show r2]
 
 instance Show PermissionPresence where
   show = \ case
-    Has p -> concat ["has(", show p, ")"]
-    Uses p -> concat ["uses(", show p, ")"]
-    Lacks p -> concat ["lacks(", show p, ")"]
-    Conflicts p -> concat ["conflicts(", show p, ")"]
+    Has r p -> concat ["has(", show p, ") because ", show r]
+    Uses r p -> concat ["uses(", show p, ") because ", show r]
+    Lacks r p -> concat ["lacks(", show p, ") because ", show r]
+    Conflicts r p -> concat ["conflicts(", show p, ") because ", show r]
 
 instance Hashable PermissionPresence
