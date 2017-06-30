@@ -7,6 +7,7 @@
 module Check.Permissions
   ( Function(..)
   , process
+  , validatePermissions
   ) where
 
 import Config
@@ -21,6 +22,7 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.These
 import Data.Vector.Mutable (IOVector)
+import Language.C.Data.Ident (Ident)
 import Language.C.Data.Node (NodeInfo, posOfNode)
 import Language.C.Data.Position (posFile)
 import Types
@@ -452,3 +454,29 @@ evalRestriction context restriction
 conflicting :: PermissionPresence -> Bool
 conflicting Conflicts{} = True
 conflicting _ = False
+
+validatePermissionActionSet :: Config -> PermissionActionSet -> [PermissionName]
+validatePermissionActionSet config =
+  filter (not . permissionNameOk) . HashSet.toList {- n.b. removes duplicates -} . HashSet.map permissionActionName
+  where
+    ds = configDeclarations config
+    permissionNameOk n = n `Map.member` ds
+
+-- | @validatePermissions config calltree@ returns a list of logger entries for
+-- each permission name that appears on explicit declarations in @calltree@
+-- that was not declared in @config@
+validatePermissions :: Config -> CallMap -> [Entry]
+validatePermissions config =
+  report
+  . Map.filter (not . null . snd)
+  . Map.map (\(ni,_callTree,actions) -> (ni, validatePermissionActionSet config actions))
+  where
+    report :: Map.Map Ident (NodeInfo, [PermissionName]) -> [Entry]
+    report = map (\(i, (ni, names)) -> Warning ni (explain i names)) . Map.toList
+    explain :: Ident -> [PermissionName] -> Text.Text
+    explain i names =
+      "The permissions of " <> (Text.pack $ show i)
+      <> " [" <> commaSepText names <>  "]"
+      <> " were not found in the config file, possible typos?"
+    commaSepText :: [PermissionName] -> Text.Text
+    commaSepText = Text.intercalate ", " . map (\(PermissionName txt) -> txt)

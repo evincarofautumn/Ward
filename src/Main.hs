@@ -70,6 +70,7 @@ main = do
             $ Map.toList callMap
             where
               nameFromIdent (Ident name _ _) = Text.pack name
+        mapM_ (record True) $ Permissions.validatePermissions config callMap
         Permissions.process functions config
         endLog
 
