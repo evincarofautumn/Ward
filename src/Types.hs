@@ -305,3 +305,12 @@ instance Show PermissionPresence where
     Conflicts p -> concat ["conflicts(", show p, ")"]
 
 instance Hashable PermissionPresence
+
+permissionActionName :: PermissionAction -> PermissionName
+permissionActionName = \case
+  Need n -> n
+  Use n -> n
+  Grant n -> n
+  Revoke n -> n
+  Deny n -> n
+  Waive n -> n
