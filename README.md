@@ -40,7 +40,7 @@ Ward should build and run on OS X and Linux; it may work on Windows with a suita
 Ward accepts annotations in the form of function-level attributes, which specify permissions and the actions Ward should take with them.
 
 ```
-__attribute__((permission(action(perm, perm, …), action(perm, perm, …), …)))
+__attribute__((ward(action(perm, perm, …), action(perm, perm, …), …)))
 ```
 
 An action may be any of the following:
@@ -56,7 +56,7 @@ An action may be any of the following:
 Here’s a typical example, which assumes Ward is invoked with `--grant=malloc`:
 
 ```
-#define PERM(...) __attribute__((permission(__VA_ARGS__)))
+#define PERM(...) __attribute__((ward(__VA_ARGS__)))
 
 void must_not_allocate(void)
   PERM(waive(malloc));

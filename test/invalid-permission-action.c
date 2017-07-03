@@ -1,1 +1,1 @@
-int foo(int) __attribute__ ((permission (require (bar))));
+int foo(int) __attribute__ ((ward (require (bar))));
