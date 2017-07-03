@@ -1,7 +1,8 @@
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE LambdaCase, PatternSynonyms #-}
 
 module Graph
   ( fromTranslationUnits
+  , pattern WardKeyword
   ) where
 
 import Control.Monad (mzero)
@@ -11,6 +12,7 @@ import Data.Functor.Identity (runIdentity)
 import Data.Generics
 import Data.Monoid ((<>))
 import Language.C.Data.Ident (Ident(..))
+import qualified Language.C.Data.Ident
 import Language.C.Syntax.AST -- *
 import Types
 import qualified Data.HashSet as HashSet
@@ -19,6 +21,18 @@ import qualified Data.Text as Text
 
 import Debug.Trace
 
+-- | An 'Ident' pattern that matches the keyword that introduces Ward annotation attributes.
+-- This is a bidirectional pattern - it will match all occurrences of the keyword, and can be used to construct
+-- the keyword with an internal position (c.f. 'Language.C.Data.Ident.internalIdent')
+pattern WardKeyword :: Ident
+pattern WardKeyword <- Ident WardKeywordStr _hash _ni
+  where
+    WardKeyword = Language.C.Data.Ident.internalIdent WardKeywordStr
+
+-- | A String pattern that matches the keyword that introduces Ward annotation attributes.
+pattern WardKeywordStr :: String
+pattern WardKeywordStr = "ward"
+      
 -- | Builds a call graph from a set of translation units.
 fromTranslationUnits :: Config -> [(FilePath, CTranslUnit)] -> CallMap
 fromTranslationUnits config
@@ -299,7 +313,7 @@ callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
 
 extractPermissionActions :: [CAttr] -> PermissionActionSet
 extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
-  CAttr (Ident "ward" _ _) expressions _ <- select attributes
+  CAttr WardKeyword expressions _ <- select attributes
   CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
   permissionSpec <- select permissions
   (permission, mSubject) <- case permissionSpec of
