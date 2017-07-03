@@ -1,2 +1,2 @@
-int foo(int) __attribute__ ((permission (require (baz))));
-int bar(int) __attribute__ ((permission (wave (quux))));
+int foo(int) __attribute__ ((ward (require (baz))));
+int bar(int) __attribute__ ((ward (wave (quux))));
