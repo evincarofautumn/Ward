@@ -20,9 +20,11 @@ executable ward
                      , Config
                      , Graph
                      , Types
+                     , DumpCallMap
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , array
+                     , bytestring
                      , containers
                      , hashable
                      , language-c >= 0.6
