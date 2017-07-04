@@ -137,6 +137,8 @@ nameMapFromTranslationUnit config
 
 ----
 
+-- | Converts a 'NameMap' into a 'CallMap' by converting function bodies into
+-- 'CallTree's.
 callMapFromNameMap :: NameMap -> CallMap
 callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
   where
