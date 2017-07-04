@@ -137,23 +137,12 @@ nameMapFromTranslationUnit config
 
 ----
 
-simplify :: CallTree a -> CallTree a
-simplify (Sequence a b) = case (simplify a, simplify b) of
-  (a', Nop) -> a'
-  (Nop, b') -> b'
-  (a', b') -> Sequence a' b'
-simplify (Choice a b) = case (simplify a, simplify b) of
-  (a', Nop) -> a'
-  (Nop, b') -> b'
-  (a', b') -> Choice a' b'
-simplify leaf = leaf
-
 callMapFromNameMap :: NameMap -> CallMap
 callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
   where
     fromEntry (name, (pos, mDef, permissions)) = let
       calls = maybe Nop fromFunction mDef
-      in (name, (pos, simplify calls, permissions))
+      in (name, (pos, simplifyCallTree calls, permissions))
 
     fromFunction :: CFunDef -> CallTree Ident
     fromFunction (CFunDef specifiers
