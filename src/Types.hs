@@ -294,6 +294,14 @@ data OutputMode
   | HtmlOutput
   deriving (Eq)
 
+-- | The Ward output action:
+--
+--   * 'AnalysisAction' runs the analyses with results formatted according to
+--     the given 'OutputMode'.
+data OutputAction
+  = AnalysisAction !OutputMode
+  deriving (Eq)
+
 -- | Format an 'Entry' according to an 'OutputMode'.
 format :: OutputMode -> Entry -> String
 

@@ -209,7 +209,7 @@ defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"
   , Args.translationUnitPaths = []
-  , Args.outputMode = CompilerOutput
+  , Args.outputAction = AnalysisAction CompilerOutput
   , Args.preprocessorFlags = []
   , Args.configFilePaths = []
   , Args.quiet = False

@@ -16,7 +16,7 @@ import Types
 
 data Args = Args
   { configFilePaths :: [FilePath]
-  , outputMode :: !OutputMode
+  , outputAction :: !OutputAction
   , preprocessorFlags :: [String]
   , preprocessorPath :: FilePath
   , quiet :: Bool
@@ -37,9 +37,9 @@ args = runA $ proc () -> do
     , help "Name of preprocessor."
     ] -< ()
 
-  outputMode <- opt
-    (fmap (fromMaybe CompilerOutput)
-      . optional . option parseOutputMode)
+  outputAction <- opt
+    (fmap (fromMaybe (AnalysisAction CompilerOutput))
+      . optional . option parseOutputAction)
     [ long "mode"
     , short 'M'
     , metavar "html|compiler"
@@ -76,10 +76,10 @@ args = runA $ proc () -> do
 
   where opt f xs = asA $ f $ mconcat xs
 
-parseOutputMode :: ReadM OutputMode
-parseOutputMode = eitherReader $ \ case
-  "compiler" -> Right CompilerOutput
-  "html" -> Right HtmlOutput
+parseOutputAction :: ReadM OutputAction
+parseOutputAction = eitherReader $ \ case
+  "compiler" -> Right (AnalysisAction CompilerOutput)
+  "html" -> Right (AnalysisAction HtmlOutput)
   mode -> Left $ concat
     [ "Unknown output mode '"
     , mode

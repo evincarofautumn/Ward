@@ -7,10 +7,11 @@ import Check.Permissions (Function(..))
 import Config
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
-import Control.Monad (unless, when)
+import Control.Monad (unless)
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
+import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
@@ -29,8 +30,7 @@ main = do
   args <- Args.parse
 
   unless (null $ Args.configFilePaths args) $ do
-    when (Args.outputMode args == CompilerOutput) $ do
-      putStrLn "Loading config files..."
+    logProgress args "Loading config files..."
   config <- do
     parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
     case sequence parsedConfigs of
@@ -38,23 +38,25 @@ main = do
       Left parseError -> do
         hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
         exitFailure
-
-  when (Args.outputMode args == CompilerOutput) $ do
-    putStrLn "Preprocessing..."
+  logProgress args "Preprocessing and parsing..."
   parseResults <- let
     temporaryDirectory = Nothing
     preprocessor = newGCC $ Args.preprocessorPath args
     in forM (Args.translationUnitPaths args)
       $ parseCFile preprocessor temporaryDirectory
       $ Args.preprocessorFlags args
-
-  when (Args.outputMode args == CompilerOutput) $ do
-    putStrLn "Checking..."
   case sequence parseResults of
-    Right translationUnits -> do
+    Right translationUnits ->
+      case Args.outputAction args of
+        AnalysisAction outputMode -> analyze args outputMode config translationUnits
+    Left parseError -> do
+      hPutStrLn stderr $ "Parse error:\n" ++ show parseError
 
-      putStr $ formatHeader $ Args.outputMode args
-
+analyze :: Args.Args -> OutputMode -> Config -> [CTranslUnit] -> IO ()
+analyze args outputMode config translationUnits = do
+  logProgress args "Checking..."
+    putStr $ formatHeader outputMode
+    do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
@@ -82,7 +84,7 @@ main = do
             Just entry
               | entry `elem` seen -> loop warnings errors seen
               | otherwise -> do
-              putStrLn $ format (Args.outputMode args) entry
+              putStrLn $ format outputMode entry
               let seen' = entry : seen
               case entry of
                 Note{} -> loop warnings errors seen'
@@ -91,10 +93,13 @@ main = do
 
       (warnings, errors) <- loop (0 :: Int) (0 :: Int) []
 
-      putStr $ formatFooter (Args.outputMode args) $ concat
+      putStr $ formatFooter outputMode $ concat
         [ "Warnings: ", show warnings
         , ", Errors: ", show errors
         ]
 
-    Left parseError -> do
-      hPutStrLn stderr $ "Parse error:\n" ++ show parseError
+logProgress :: Args.Args -> String -> IO ()
+logProgress args s = case Args.outputAction args of
+  AnalysisAction HtmlOutput -> return ()
+  AnalysisAction CompilerOutput -> hPutStrLn stdout s
+  GraphAction -> hPutStrLn stderr s
