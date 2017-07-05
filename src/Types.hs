@@ -298,8 +298,12 @@ data OutputMode
 --
 --   * 'AnalysisAction' runs the analyses with results formatted according to
 --     the given 'OutputMode'.
+--
+--   * 'GraphAction' simply parses the C sources and emits the inferred call
+--     graph.
 data OutputAction
   = AnalysisAction !OutputMode
+  | GraphAction
   deriving (Eq)
 
 -- | Format an 'Entry' according to an 'OutputMode'.

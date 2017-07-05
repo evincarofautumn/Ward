@@ -42,8 +42,8 @@ args = runA $ proc () -> do
       . optional . option parseOutputAction)
     [ long "mode"
     , short 'M'
-    , metavar "html|compiler"
-    , help "Output mode style (default 'compiler')."
+    , metavar "html|compiler|graph"
+    , help "Output mode style (default 'compiler').  The 'graph' mode does not run analyses, just parses the source files and emits inferred call graph."
     ] -< ()
 
   configFilePaths <- opt (many . strOption)
@@ -80,10 +80,11 @@ parseOutputAction :: ReadM OutputAction
 parseOutputAction = eitherReader $ \ case
   "compiler" -> Right (AnalysisAction CompilerOutput)
   "html" -> Right (AnalysisAction HtmlOutput)
+  "graph" -> Right GraphAction
   mode -> Left $ concat
     [ "Unknown output mode '"
     , mode
-    , "'. Valid modes are 'compiler' and 'html'."
+    , "'. Valid modes are 'compiler', 'html', or 'graph'."
     ]
 
 defaultPreprocessorFlags :: [String]

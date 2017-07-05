@@ -14,12 +14,13 @@ import Language.C.Data.Ident (Ident(Ident))
 import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
 import System.Exit (exitFailure)
-import System.IO (hPutStrLn, stderr)
+import System.IO (hPutStrLn, stderr, stdout)
 import Types
 import qualified Args
 import qualified Check.Permissions as Permissions
 import qualified Data.Map as Map
 import qualified Data.Text as Text
+import qualified DumpCallMap
 import qualified Graph
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
@@ -49,6 +50,7 @@ main = do
     Right translationUnits ->
       case Args.outputAction args of
         AnalysisAction outputMode -> analyze args outputMode config translationUnits
+        GraphAction -> dumpCallGraph args config translationUnits
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError
 
@@ -103,3 +105,10 @@ logProgress args s = case Args.outputAction args of
   AnalysisAction HtmlOutput -> return ()
   AnalysisAction CompilerOutput -> hPutStrLn stdout s
   GraphAction -> hPutStrLn stderr s
+
+dumpCallGraph :: Args.Args -> Config -> [CTranslUnit] -> IO ()
+dumpCallGraph args config translationUnits = do
+  let callMap = Graph.fromTranslationUnits config
+        (zip (Args.translationUnitPaths args) translationUnits)
+  DumpCallMap.hPutCallMap stdout callMap
+
