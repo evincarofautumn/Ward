@@ -226,6 +226,9 @@ callTreeIndex index tree = breadthFirst tree !! index
     breadthFirst t = [t]
 
 --------------------------------------------------------------------------------
+-- | An error that may occur while parsing a callmap graph file.
+type CallMapParseError = ParsecErr.ParseError
+
 -- Output
 --------------------------------------------------------------------------------
 
