@@ -27,6 +27,7 @@ executable ward
                      , array
                      , bytestring
                      , containers
+                     , filepath
                      , hashable
                      , language-c >= 0.6
                      , optparse-applicative

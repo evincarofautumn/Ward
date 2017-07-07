@@ -8,12 +8,14 @@ import Config
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless)
-import Data.Traversable (forM)
+import Data.Bifunctor (Bifunctor(..))
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
+import qualified Language.C.Parser as CParser
 import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
 import System.Exit (exitFailure)
+import qualified System.FilePath as FP
 import System.IO (hPutStrLn, stderr, stdout)
 import Types
 import qualified Args
@@ -22,6 +24,7 @@ import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified DumpCallMap
 import qualified Graph
+import qualified ParseCallMap
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -40,12 +43,7 @@ main = do
         hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
         exitFailure
   logProgress args "Preprocessing and parsing..."
-  parseResults <- let
-    temporaryDirectory = Nothing
-    preprocessor = newGCC $ Args.preprocessorPath args
-    in forM (Args.translationUnitPaths args)
-      $ parseCFile preprocessor temporaryDirectory
-      $ Args.preprocessorFlags args
+  parseResults <- traverse (parseInput args) (Args.translationUnitPaths args)
   case sequence parseResults of
     Right translationUnits ->
       case Args.outputAction args of
@@ -54,15 +52,16 @@ main = do
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError
 
-analyze :: Args.Args -> OutputMode -> Config -> [CTranslUnit] -> IO ()
+analyze :: Args.Args -> OutputMode -> Config -> [ProcessingUnit] -> IO ()
 analyze args outputMode config translationUnits = do
   logProgress args "Checking..."
+  do
     putStr $ formatHeader outputMode
     do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
-          callMap = Graph.fromTranslationUnits config
+          callMap = Graph.fromProcessingUnits config
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
@@ -106,9 +105,35 @@ logProgress args s = case Args.outputAction args of
   AnalysisAction CompilerOutput -> hPutStrLn stdout s
   GraphAction -> hPutStrLn stderr s
 
-dumpCallGraph :: Args.Args -> Config -> [CTranslUnit] -> IO ()
+dumpCallGraph :: Args.Args -> Config -> [ProcessingUnit] -> IO ()
 dumpCallGraph args config translationUnits = do
-  let callMap = Graph.fromTranslationUnits config
+  let callMap = Graph.fromProcessingUnits config
         (zip (Args.translationUnitPaths args) translationUnits)
   DumpCallMap.hPutCallMap stdout callMap
+
+parseInput :: Args.Args -> FilePath -> IO (Either ProcessingUnitParseError ProcessingUnit)
+parseInput args path =
+  case classifyPath path of
+    CSourcePathClass ->
+      (bimap CSourceUnitParseError CSourceProcessingUnit) <$> parseCInput args path
+    CallMapPathClass ->
+      (bimap CallMapUnitParseError CallMapProcessingUnit) <$> parseGraphInput args path
+
+data PathClass = CSourcePathClass | CallMapPathClass
+
+classifyPath :: FilePath -> PathClass
+classifyPath path =
+  if FP.takeExtension path == ".graph"
+  then CallMapPathClass
+  else CSourcePathClass
+
+parseCInput :: Args.Args -> FilePath -> IO (Either CParser.ParseError CTranslUnit)
+parseCInput args path =
+  let temporaryDirectory = Nothing
+      preprocessor = newGCC $ Args.preprocessorPath args
+  in parseCFile preprocessor temporaryDirectory (Args.preprocessorFlags args) path
+
+parseGraphInput :: Args.Args -> FilePath -> IO (Either CallMapParseError CallMap)
+parseGraphInput _args path =
+  ParseCallMap.fromFile path
 

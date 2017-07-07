@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase, PatternSynonyms #-}
 
 module Graph
-  ( fromTranslationUnits
+  ( fromProcessingUnits
   , pattern WardKeyword
   ) where
 
@@ -33,7 +33,24 @@ pattern WardKeyword <- Ident WardKeywordStr _hash _ni
 pattern WardKeywordStr :: String
 pattern WardKeywordStr = "ward"
       
--- | Builds a call graph from a set of translation units.
+-- | Builds a call graph from a set of processing units.
+fromProcessingUnits :: Config -> [(FilePath, ProcessingUnit)] -> CallMap
+fromProcessingUnits config units =
+  let (cs, gs) = partitionProcessingUnits units
+      g0 :: CallMap
+      g0 = foldMap snd gs
+      g' = if null cs then mempty else fromTranslationUnits config cs
+  in g0 <> g'
+
+partitionProcessingUnits :: [(a, ProcessingUnit)] -> ([(a, CTranslUnit)], [(a, CallMap)])
+partitionProcessingUnits = foldr split ([], [])
+  where
+    split (x, u) (cs,gs) =
+      case u of
+        CSourceProcessingUnit c -> ((x,c):cs, gs)
+        CallMapProcessingUnit g -> (cs, (x,g):gs)
+
+-- | Builds a call graph from a set of C translation units.
 fromTranslationUnits :: Config -> [(FilePath, CTranslUnit)] -> CallMap
 fromTranslationUnits config
   = callMapFromNameMap

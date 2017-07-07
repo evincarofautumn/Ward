@@ -22,8 +22,10 @@ import Language.C.Data.Ident (Ident(..))
 import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
+import qualified Language.C.Parser as CParser
 import qualified Data.Map as Map
 import qualified Data.Text as Text
+import qualified Text.Parsec.Error as ParsecErr
 
 --------------------------------------------------------------------------------
 -- Permissions
@@ -226,9 +228,25 @@ callTreeIndex index tree = breadthFirst tree !! index
     breadthFirst t = [t]
 
 --------------------------------------------------------------------------------
+-- Input
+--------------------------------------------------------------------------------
+
+-- | A processing unit is a single input file that must be consumed by Ward.
+-- A processing unit is either a parsed C translation unit, or a precomputed callgraph.
+data ProcessingUnit =
+  CSourceProcessingUnit !CTranslUnit
+  | CallMapProcessingUnit !CallMap
+
 -- | An error that may occur while parsing a callmap graph file.
 type CallMapParseError = ParsecErr.ParseError
 
+-- | An error parsing one of the processing units.  Either a C parse error or a CallMapParseError
+data ProcessingUnitParseError =
+  CSourceUnitParseError CParser.ParseError
+  | CallMapUnitParseError !CallMapParseError
+  deriving (Show)
+
+--------------------------------------------------------------------------------
 -- Output
 --------------------------------------------------------------------------------
 
@@ -340,7 +358,7 @@ formatHeader HtmlOutput = "\
 
 -- | The footer to output after entries for a given 'OutputMode'.
 formatFooter :: OutputMode -> String -> String
-formatFooter CompilerOutput extra = extra
+formatFooter CompilerOutput extra = extra <> "\n"
 formatFooter HtmlOutput extra = "\
   \</ul>\n\
   \\&" <> extra <> "\n\

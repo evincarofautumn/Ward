@@ -226,6 +226,7 @@ wardTest args check = do
   let temporaryDirectory = Nothing
   let preprocessor = newGCC $ Args.preprocessorPath args
   parseResults <- forM (Args.translationUnitPaths args)
+    $ fmap (fmap (either (Left  . CSourceUnitParseError) (Right . CSourceProcessingUnit)))
     $ parseCFile preprocessor temporaryDirectory
     $ Args.preprocessorFlags args
   config <- do
@@ -239,7 +240,7 @@ wardTest args check = do
       entriesChan <- newChan
       flip runLogger entriesChan $ do
         let
-          callMap = Graph.fromTranslationUnits config
+          callMap = Graph.fromProcessingUnits config
             (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
