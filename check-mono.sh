@@ -1,6 +1,6 @@
 #!/bin/bash
 
-mono_path="$HOME/Projects/mono"
+mono_path="$HOME/Projects/mono2"
 # profile_flags="+RTS -p -hr -RTS"
 profile_flags=""
 
@@ -35,6 +35,13 @@ stack exec ward \
 	"$mono_path/mono/sgen/sgen-split-nursery.c" \
 	"$mono_path/mono/sgen/sgen-thread-pool.c" \
 	"$mono_path/mono/sgen/sgen-workers.c" \
+	"$mono_path/mono/metadata/sgen-bridge.c" \
+	"$mono_path/mono/metadata/sgen-mono.c" \
+	"$mono_path/mono/metadata/sgen-new-bridge.c" \
+	"$mono_path/mono/metadata/sgen-old-bridge.c" \
+	"$mono_path/mono/metadata/sgen-stw.c" \
+	"$mono_path/mono/metadata/sgen-tarjan-bridge.c" \
+	"$mono_path/mono/metadata/sgen-toggleref.c" \
 	\
 	-P"-I$mono_path" \
 	-P"-I$mono_path/eglib/src" \
@@ -106,13 +113,6 @@ stack exec ward \
 # "$mono_path/mono/metadata/security-core-clr.c"
 # "$mono_path/mono/metadata/security-manager.c"
 # "$mono_path/mono/metadata/seq-points-data.c"
-# "$mono_path/mono/metadata/sgen-bridge.c"
-# "$mono_path/mono/metadata/sgen-mono.c"
-# "$mono_path/mono/metadata/sgen-new-bridge.c"
-# "$mono_path/mono/metadata/sgen-old-bridge.c"
-# "$mono_path/mono/metadata/sgen-stw.c"
-# "$mono_path/mono/metadata/sgen-tarjan-bridge.c"
-# "$mono_path/mono/metadata/sgen-toggleref.c"
 # "$mono_path/mono/metadata/sre-encode.c"
 # "$mono_path/mono/metadata/sre-save.c"
 # "$mono_path/mono/metadata/sre.c"
