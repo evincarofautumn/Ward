@@ -304,8 +304,22 @@ process functions config = do
   -- Then we propagate permission information through the graph.
 
   -- For each SCC:
-  liftIO $ for_ sccs $ \ scc -> do
+  liftIO $ for_ sccs $ inferPermissionsSCC implicitPermissions graphLookup graphVertex
 
+  -- Finally, we check the whole call graph, reporting conflicting information
+  -- at call sites, missing annotations (from enforcements), and violated
+  -- restrictions.
+
+  for_ sccs $ reportSCC requiredAnnotations restrictions graphLookup
+
+  -- That's all, folks!
+
+inferPermissionsSCC :: [PermissionName]
+           -> (Graph.Vertex -> (Node, FunctionName, [FunctionName]))
+           -> (FunctionName -> Maybe Graph.Vertex)
+           -> Tree.Tree Graph.Vertex
+           -> IO ()
+inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
     -- We continue processing until the SCC's permission information reaches a
     -- fixed point, i.e., we are no longer adding permission information.
     growing <- newIORef True
@@ -524,23 +538,39 @@ process functions config = do
         shouldContinue <- readIORef growing
         if shouldContinue then loop else pure ()
 
-  -- Finally, we check the whole call graph, reporting conflicting information
-  -- at call sites, missing annotations (from enforcements), and violated
-  -- restrictions.
-
+reportSCC :: [(FunctionName, PermissionActionSet)]
+          -> [Restriction]
+          -> (Graph.Vertex -> (Node, FunctionName, [FunctionName]))
+          -> Tree.Tree Graph.Vertex
+          -> Logger ()
+reportSCC requiredAnnotations restrictions graphLookup scc = do
   -- For each function in each SCC:
-  for_ sccs $ \ scc -> do
-    for_ (Tree.flatten scc) $ \ vertex -> do
+    for_ (Tree.flatten scc) $ \vertex -> do
       let
         (node, _name, _incoming) = graphLookup vertex
         name = nodeName node
         pos = nodePos node
-      annotations <- liftIO $ readIORef $ nodeAnnotations node
-      permissions <- liftIO $ readIORef $ nodePermissions node
+        requiredPermissions = lookup name requiredAnnotations
+      do
+        (annotations, permissions) <- liftIO $ do
+          a <- readIORef $ nodeAnnotations node
+          p <- readIORef $ nodePermissions node
+          return (a,p)
+        reportDefinition restrictions requiredPermissions (annotations, permissions, name, pos)
+      do
+        sites <- liftIO $ fmap Vector.toList $ Vector.freeze $ nodeSites node
+        reportCallSites restrictions (sites, nodeCalls node, name, pos)
 
+-- | Report violations at the function definitino due to missing required annotations,
+-- annotations that miss inferred permissions, or inconsistent inferred permissions.
+reportDefinition :: [Restriction]
+           -> Maybe PermissionActionSet
+           -> (PermissionActionSet, PermissionActionSet, FunctionName, NodeInfo)
+           -> Logger ()
+reportDefinition restrictions requiredPermissions (annotations, permissions, name, pos) = do
       -- If a function has required annotations, ensure the annotation
       -- mentions all inferred permissions.
-      for_ (lookup name requiredAnnotations) $ \ userAnnotated -> do
+      for_ requiredPermissions $ \ userAnnotated -> do
         -- I think this should generally be equal to 'inferredNotDeclared'.
         let implicit = HashSet.difference permissions userAnnotated
         unless (HashSet.null implicit) $ do
@@ -588,9 +618,14 @@ process functions config = do
               , Text.pack $ show inconsistency
               ]
 
+-- | Report violations at the calls in the given function due to
+-- callee functions with conflicting permissions or violated restrictions.
+reportCallSites :: [Restriction]
+                -> ([Site], CallTree FunctionName, FunctionName, NodeInfo)
+                -> Logger ()
+reportCallSites restrictions (sites, callees, name, pos) = do
       -- Report call sites with conflicting information.
-      sites <- liftIO $ Vector.freeze $ nodeSites node
-      let conflicts = HashSet.filter conflicting $ mconcat $ Vector.toList sites
+      let conflicts = HashSet.filter conflicting $ mconcat sites
       unless (HashSet.null conflicts) $ do
         record True $ Error pos $ Text.concat $
           [ "conflicting information for permissions "
@@ -602,15 +637,15 @@ process functions config = do
           ]
 
       -- For each call site, check every restriction and report any violations.
-      for_ (zip [0 :: Int ..] (Vector.toList sites)) $ \ (index, s) -> do
+      for_ (zip [0 :: Int ..] sites) $ \ (index, s) -> do
         let
           position = case index of
             0 -> ["before first call"]
             _ ->
               [ "at "
-              , Text.pack $ show $ callTreeIndex (index - 1) $ nodeCalls node
+              , Text.pack $ show $ callTreeIndex (index - 1) callees
               ]
-        for_ (restrictions) $ \ restriction -> do
+        for_ restrictions $ \ restriction -> do
           unless (evalRestriction s restriction) $ do
             record True $ Error pos $ Text.concat $
               [ "restriction "
@@ -625,7 +660,6 @@ process functions config = do
               ]
               <> position
 
-  -- That's all, folks!
 
 -- | Builds call graph edges from a list of functions, for input to
 -- @Data.Graph.graphFromEdges@.
