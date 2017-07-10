@@ -327,7 +327,7 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
       writeIORef growing False
 
       -- For each function in the SCC:
-      for_ (Tree.flatten scc) $ \ vertex -> do
+      for_ scc $ \ vertex -> do
         let
           (node, name, _incoming) = graphLookup vertex
           sites = nodeSites node
@@ -545,7 +545,7 @@ reportSCC :: [(FunctionName, PermissionActionSet)]
           -> Logger ()
 reportSCC requiredAnnotations restrictions graphLookup scc = do
   -- For each function in each SCC:
-    for_ (Tree.flatten scc) $ \vertex -> do
+    for_ scc $ \vertex -> do
       let
         (node, _name, _incoming) = graphLookup vertex
         name = nodeName node
