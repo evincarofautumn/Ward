@@ -339,7 +339,7 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
             , not $ Waive p `HashSet.member` permissionActions
             ]
           nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
-        writeIORef growing =<< propagatePermissionsNode graphLookup graphVertex (node, nodePermissionActions, name)
+        writeIORef growing =<< propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
 
       -- We continue processing the current SCC if we're still propagating
       -- permission information between functions.
@@ -349,31 +349,15 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
 
 propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
                        -> (FunctionName -> Maybe Graph.Vertex)
-                       -> (Node, [PermissionAction], FunctionName)
+                       -> (Node, Site, FunctionName)
                        -> IO Bool
-propagatePermissionsNode graphLookup graphVertex (node, nodePermissionActions, name) = do
+propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = do
         let
           sites = nodeSites node
 
-        for_ nodePermissionActions $ \ permissionAction -> do
-
-          -- We initialize the first call site of the function according to its
-          -- permission actions.
-          flip (IOVector.modify sites) 0 $ (<>) $ case permissionAction of
-
-            -- If a function needs or revokes a permission, then its first call
-            -- site must have that permission.
-            Need p -> site $ Has p
-            Use p -> site $ Uses p
-            Revoke p -> site $ Has p
-
-            -- If a function grants or denies a permission, then its first call
-            -- site must lack that permission.
-            Grant p -> site $ Lacks p
-            Deny p -> site $ Lacks p
-
-            -- FIXME: Verify this.
-            Waive{} -> mempty
+        -- We initialize the first call site of the function according to its
+        -- permission actions.
+        IOVector.modify sites (\old -> old <> newInitialSite) 0
 
         -- Next, we infer information about permissions at each call site in the
         -- function by traversing its call tree.
@@ -736,6 +720,27 @@ validatePermissions config =
       <> " were not found in the config file, possible typos?"
     commaSepText :: [PermissionName] -> Text.Text
     commaSepText = Text.intercalate ", " . map (\(PermissionName txt) -> txt)
+
+-- | Given a set of permission actions (either inferred or explicitly annotated)
+-- compute the permission presense available on entry to the function.
+initialSite :: [PermissionAction] -> Site
+initialSite =
+  foldMap $ \ permissionAction -> case permissionAction of
+  -- If a function needs or revokes a permission, then its first call
+  -- site must have that permission.
+  Need p -> site $ Has p
+  Use p -> site $ Uses p
+  Revoke p -> site $ Has p
+
+  -- If a function grants or denies a permission, then its first call
+  -- site must lack that permission.
+  Grant p -> site $ Lacks p
+  Deny p -> site $ Lacks p
+
+  -- FIXME: Verify this.
+  Waive{} -> mempty
+
+
 
 -- | Convenience function for building call site info.
 site :: PermissionPresence -> Site
