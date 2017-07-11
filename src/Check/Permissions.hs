@@ -368,17 +368,29 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
         -- Next, we infer information about permissions at each call site in the
         -- function by traversing its call tree.
         let
-          processCallTree
-            :: CallTree (Maybe Graph.Vertex)  -- input
-            -> Int                            -- offset within current sequence
-            -> IOVector Site                  -- current sequence
-            -> IO ()
 
-          processCallTree (Choice a b) i v = do
+        -- We start processing the call tree from the root, filling in the list
+        -- of top-level call sites for the function.
+        processCallTree graphLookup callVertices 0 sites
+
+        initial <- IOVector.read sites 0
+        final <- IOVector.read sites (IOVector.length sites - 1)
+        permissionsFromCallSites (nodePermissions node) (initial, final)
+
+
+-- | Given a call tree and the permission presence set at the current site (as
+-- an index into a vector of sites), update the current site and the following one
+-- with the new permission presence set.
+processCallTree :: (Graph.Vertex -> (Node, t1, t)) -- graphLookup
+                -> CallTree (Maybe Graph.Vertex)   -- input
+                -> Int                             -- offset within current sequence
+                -> IOVector Site                   -- current sequence
+                -> IO ()
+processCallTree graphLookup (Choice a b) i v = do
             callsA <- IOVector.replicate (callTreeBreadth a + 1) mempty
             callsB <- IOVector.replicate (callTreeBreadth b + 1) mempty
-            processCallTree a 0 callsA
-            processCallTree b 0 callsB
+            processCallTree graphLookup a 0 callsA
+            processCallTree graphLookup b 0 callsB
             beforeA <- IOVector.read callsA 0
             afterA <- IOVector.read callsA (IOVector.length callsA - 1)
             beforeB <- IOVector.read callsB 0
@@ -386,9 +398,9 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
             IOVector.write v i (beforeA <> beforeB)
             IOVector.write v (succ i) (afterA <> afterB)
 
-          processCallTree (Sequence a b) i v = do
-            processCallTree a i v
-            processCallTree b (i + callTreeBreadth a) v
+processCallTree graphLookup (Sequence a b) i v = do
+            processCallTree graphLookup a i v
+            processCallTree graphLookup b (i + callTreeBreadth a) v
 
             -- Once we've collected permission information for each call site
             -- and propagated it forward, we propagate all /non-conflicting/
@@ -411,8 +423,8 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
                     $ map presencePermission
                     $ HashSet.toList before)
 
-          processCallTree (Call (Just call)) i v = do
-            let (Node { nodePermissions = callPermissionsRef }, _callName, _) = graphLookup call
+processCallTree graphLookup (Call (Just call)) i v = do
+            let (Node { nodePermissions = callPermissionsRef }, _, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
 
             -- We propagate non-conflicting permissions forward in the call tree
@@ -491,19 +503,11 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
                 -- FIXME: Verify this.
                 Waive{} -> pure ()
 
-          -- Assume an unknown call has irrelevant permissions. I just know this
-          -- is going to bite me later.
-          processCallTree (Call Nothing) _ _ = pure ()
-          processCallTree Nop _ _ = pure ()
-
-        -- We start processing the call tree from the root, filling in the list
-        -- of top-level call sites for the function.
-        processCallTree callVertices 0 sites
-
-        initial <- IOVector.read sites 0
-        final <- IOVector.read sites (IOVector.length sites - 1)
-        permissionsFromCallSites (nodePermissions node) (initial, final)
-
+processCallTree _ (Call Nothing) _ _ =
+                -- Assume an unknown call has irrelevant permissions. I just know this
+                -- is going to bite me later.
+                pure ()
+processCallTree _ Nop _ _ = pure ()
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
