@@ -17,7 +17,7 @@ import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
 import Data.List (foldl', isSuffixOf, nub, sort)
-import Data.Monoid ((<>))
+import Data.Monoid ((<>), Any(..))
 import Data.Vector.Mutable (IOVector)
 import Language.C.Data.Ident (Ident)
 import Language.C.Data.Node (NodeInfo, posOfNode)
@@ -328,9 +328,9 @@ inferPermissionsSCC :: [PermissionName]
 inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
     -- We continue processing until the SCC's permission information reaches a
     -- fixed point, i.e., we are no longer adding permission information.
-    growing <- newIORef True
+    growing <- newIORef mempty
     fix $ \ loop -> do
-      writeIORef growing False
+      writeIORef growing mempty
 
       -- For each function in the SCC:
       for_ scc $ \ vertex -> do
@@ -346,17 +346,17 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
             ]
           nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
         nodeGrowing <- propagatePermissionsNode graphLookup (node, initialSite nodePermissionActions, name, graphVertex <$> nodeCalls node)
-        modifyIORef' growing (|| nodeGrowing)
+        modifyIORef' growing (<> nodeGrowing)
 
       -- We continue processing the current SCC if we're still propagating
       -- permission information between functions.
       do
         shouldContinue <- readIORef growing
-        if shouldContinue then loop else pure ()
+        if getAny shouldContinue then loop else pure ()
 
 propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
                        -> (Node, Site, FunctionName, CallTree (Maybe Graph.Vertex))
-                       -> IO Bool
+                       -> IO Any
 propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices) = do
         let
           sites = nodeSites node
@@ -507,7 +507,7 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
-permissionsFromCallSites :: IORef PermissionActionSet -> (Site, Site) -> IO Bool
+permissionsFromCallSites :: IORef PermissionActionSet -> (Site, Site) -> IO Any
 permissionsFromCallSites permissionRef initialFinal@(initial, final) = do
             initialActions <- readIORef permissionRef
             let currentSize = HashSet.size initialActions
@@ -530,7 +530,7 @@ permissionsFromCallSites permissionRef initialFinal@(initial, final) = do
             -- fixed point.
             --
             -- TODO: Limit the number of iterations to prevent infinite loops.
-            pure $ modifiedSize > currentSize
+            pure $ Any $ modifiedSize > currentSize
 
 -- Given the initial and final call sites and a permission P, determine the action
 -- of the function with respect to P by considering its presence or absence at function entry and exit.
