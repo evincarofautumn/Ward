@@ -491,43 +491,30 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
         -- of top-level call sites for the function.
         processCallTree callVertices 0 sites
 
-        permissionsFromCallSites (nodePermissions node) sites
+        initial <- IOVector.read sites 0
+        final <- IOVector.read sites (IOVector.length sites - 1)
+        permissionsFromCallSites (nodePermissions node) (initial, final)
 
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
-permissionsFromCallSites :: IORef PermissionActionSet -> IOVector Site -> IO Bool
-permissionsFromCallSites permissionRef callsites = do
-            currentSize <- HashSet.size <$> readIORef permissionRef
+permissionsFromCallSites :: IORef PermissionActionSet -> (Site, Site) -> IO Bool
+permissionsFromCallSites permissionRef initialFinal@(initial, final) = do
+            initialActions <- readIORef permissionRef
+            let currentSize = HashSet.size initialActions
 
             -- For each "relevant" permission P in first & last call sites:
-            initial <- IOVector.read callsites 0
-            final <- IOVector.read callsites (IOVector.length callsites - 1)
             let
               relevantPermissions = nub $ map presencePermission
                 $ HashSet.toList initial <> HashSet.toList final
 
-            -- (NB. The seemingly redundant side conditions here prevent spurious
-            -- error messages from inconsistent permissions.)
-            for_ relevantPermissions $ \ p -> do
-              when (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial)) $ do
+            let
+              derivedActions = HashSet.fromList $ mconcat $ map (derivePermissionActions initialFinal) relevantPermissions
+              finalActions = derivedActions <> initialActions
 
-                -- When the initial state has P, the function needs P.
-                modifyIORef' permissionRef $ HashSet.insert $ Need p
-
-                -- When the initial state has P, but the final state lacks P,
-                -- the function revokes P.
-                when (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final)) $ do
-                  modifyIORef' permissionRef $ HashSet.insert $ Revoke p
-
-              when (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial)) $ do
-
-                -- When the initial state lacks P but the final state has P, the
-                -- function grants P.
-                when (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final)) $ do
-                  modifyIORef' permissionRef $ HashSet.insert $ Grant p
-
-            modifiedSize <- HashSet.size <$> readIORef permissionRef
+            finalActions `seq` writeIORef permissionRef finalActions
+            let
+              modifiedSize = HashSet.size finalActions
 
             -- If we added permissions, the inferred set of permissions for this
             -- SCC may still be growing, so we re-process the SCC until we reach a
@@ -535,6 +522,40 @@ permissionsFromCallSites permissionRef callsites = do
             --
             -- TODO: Limit the number of iterations to prevent infinite loops.
             pure $ modifiedSize > currentSize
+
+-- Given the initial and final call sites and a permission P, determine the action
+-- of the function with respect to P by considering its presence or absence at function entry and exit.
+derivePermissionActions :: (Site,Site) -> PermissionName -> [PermissionAction]
+derivePermissionActions (initial,final) p =
+  needsRevokes <> grants
+  where
+    -- (NB. The seemingly redundant side conditions here prevent spurious
+    -- error messages from inconsistent permissions.)
+    needsRevokes =
+      if (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial))
+      then -- When the initial state has P, the function needs P.
+        needs <> revokes
+      else
+        mempty
+    grants =
+      if (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial))
+         && (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final))
+      then
+        -- When the initial state lacks P but the final state has P, the
+        -- function grants P.
+        [Grant p]
+      else
+        mempty
+
+    needs = [Need p]
+    revokes =
+      if (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final))
+      then 
+        -- When the initial state has P, but the final state lacks P,
+        -- the function revokes P.
+        [Revoke p]
+      else
+        mempty
 
 
 ----------------------------------------------------------------------
