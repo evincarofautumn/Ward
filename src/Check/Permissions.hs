@@ -314,6 +314,10 @@ process functions config = do
 
   -- That's all, folks!
 
+----------------------------------------------------------------------
+-- Inference
+----------------------------------------------------------------------
+
 inferPermissionsSCC :: [PermissionName]
            -> (Graph.Vertex -> (Node, FunctionName, [FunctionName]))
            -> (FunctionName -> Maybe Graph.Vertex)
@@ -483,10 +487,17 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
           processCallTree (Call Nothing) _ _ = pure ()
           processCallTree Nop _ _ = pure ()
 
-          -- After processing a call tree, we can infer its permission actions
-          -- based on the permissions in the first and last call sites.
-          permissionsFromCallSites :: IORef PermissionActionSet -> IOVector Site -> IO Bool
-          permissionsFromCallSites permissionRef callsites = do
+        -- We start processing the call tree from the root, filling in the list
+        -- of top-level call sites for the function.
+        processCallTree callVertices 0 sites
+
+        permissionsFromCallSites (nodePermissions node) sites
+
+
+-- After processing a call tree, we can infer its permission actions
+-- based on the permissions in the first and last call sites.
+permissionsFromCallSites :: IORef PermissionActionSet -> IOVector Site -> IO Bool
+permissionsFromCallSites permissionRef callsites = do
             currentSize <- HashSet.size <$> readIORef permissionRef
 
             -- For each "relevant" permission P in first & last call sites:
@@ -525,11 +536,10 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             -- TODO: Limit the number of iterations to prevent infinite loops.
             pure $ modifiedSize > currentSize
 
-        -- We start processing the call tree from the root, filling in the list
-        -- of top-level call sites for the function.
-        processCallTree callVertices 0 sites
 
-        permissionsFromCallSites (nodePermissions node) sites
+----------------------------------------------------------------------
+-- Reporting
+----------------------------------------------------------------------
 
 
 reportSCC :: [(FunctionName, PermissionActionSet)]
@@ -554,6 +564,7 @@ reportSCC requiredAnnotations restrictions graphLookup scc = do
       do
         sites <- liftIO $ fmap Vector.toList $ Vector.freeze $ nodeSites node
         reportCallSites restrictions (sites, nodeCalls node, name, pos)
+
 
 -- | Report violations at the function definitino due to missing required annotations,
 -- annotations that miss inferred permissions, or inconsistent inferred permissions.
@@ -739,8 +750,6 @@ initialSite =
 
   -- FIXME: Verify this.
   Waive{} -> mempty
-
-
 
 -- | Convenience function for building call site info.
 site :: PermissionPresence -> Site
