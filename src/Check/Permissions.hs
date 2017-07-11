@@ -343,7 +343,8 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
             , not $ Waive p `HashSet.member` permissionActions
             ]
           nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
-        writeIORef growing =<< propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
+        nodeGrowing <- propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
+        modifyIORef' growing (|| nodeGrowing)
 
       -- We continue processing the current SCC if we're still propagating
       -- permission information between functions.
