@@ -345,7 +345,7 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
             , not $ Waive p `HashSet.member` permissionActions
             ]
           nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
-        nodeGrowing <- propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
+        nodeGrowing <- propagatePermissionsNode graphLookup (node, initialSite nodePermissionActions, name, graphVertex <$> nodeCalls node)
         modifyIORef' growing (|| nodeGrowing)
 
       -- We continue processing the current SCC if we're still propagating
@@ -355,10 +355,9 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
         if shouldContinue then loop else pure ()
 
 propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
-                       -> (FunctionName -> Maybe Graph.Vertex)
-                       -> (Node, Site, FunctionName)
+                       -> (Node, Site, FunctionName, CallTree (Maybe Graph.Vertex))
                        -> IO Bool
-propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, _name) = do
+propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices) = do
         let
           sites = nodeSites node
 
@@ -369,8 +368,6 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, _name) =
         -- Next, we infer information about permissions at each call site in the
         -- function by traversing its call tree.
         let
-          callVertices = graphVertex <$> nodeCalls node
-
           processCallTree
             :: CallTree (Maybe Graph.Vertex)  -- input
             -> Int                            -- offset within current sequence
