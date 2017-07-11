@@ -330,8 +330,6 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
       for_ scc $ \ vertex -> do
         let
           (node, name, _incoming) = graphLookup vertex
-          sites = nodeSites node
-
         -- For each permission action in function, plus implicit permissions not waived:
         permissionActions <- readIORef $ nodePermissions node
         let
@@ -340,7 +338,24 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
             | p <- implicitPermissions
             , not $ Waive p `HashSet.member` permissionActions
             ]
-        for_ (HashSet.toList permissionActions <> implicitPermissionActions) $ \ permissionAction -> do
+          nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
+        writeIORef growing =<< propagatePermissionsNode graphLookup graphVertex (node, nodePermissionActions, name)
+
+      -- We continue processing the current SCC if we're still propagating
+      -- permission information between functions.
+      do
+        shouldContinue <- readIORef growing
+        if shouldContinue then loop else pure ()
+
+propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
+                       -> (FunctionName -> Maybe Graph.Vertex)
+                       -> (Node, [PermissionAction], FunctionName)
+                       -> IO Bool
+propagatePermissionsNode graphLookup graphVertex (node, nodePermissionActions, name) = do
+        let
+          sites = nodeSites node
+
+        for_ nodePermissionActions $ \ permissionAction -> do
 
           -- We initialize the first call site of the function according to its
           -- permission actions.
@@ -530,13 +545,8 @@ inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
         -- of top-level call sites for the function.
         processCallTree callVertices 0 sites
 
-        writeIORef growing =<< permissionsFromCallSites (nodePermissions node) sites
+        permissionsFromCallSites (nodePermissions node) sites
 
-      -- We continue processing the current SCC if we're still propagating
-      -- permission information between functions.
-      do
-        shouldContinue <- readIORef growing
-        if shouldContinue then loop else pure ()
 
 reportSCC :: [(FunctionName, PermissionActionSet)]
           -> [Restriction]
