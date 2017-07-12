@@ -12,9 +12,9 @@ module Types where
 import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
 import qualified Data.Aeson as A
+import Data.Foldable (fold)
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
-import Data.List (intersperse)
 import Data.Map.Strict (Map)
 import Data.Monoid ((<>), Endo(..))
 import qualified Data.Semigroup
@@ -27,6 +27,7 @@ import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
 import qualified Language.C.Parser as CParser
 import qualified Data.Map.Strict as Map
+import qualified Data.Sequence as Sequence
 import qualified Data.Text as Text
 
 import Orphans ()
@@ -199,7 +200,6 @@ instance A.FromJSON CallMap
 instance A.ToJSON CallMap
 
 -- | A 'CallTree' describes the calls that a function makes in its definition. A
--- 'Call' leaf node refers to a call site.
 --
 -- 'Choice' refers to functions that are called in different branches of an @if@
 -- or @?:@, such as:
@@ -233,7 +233,7 @@ instance (Show a) => Show (CallTree a) where
       choicePrec = 0
 
 newtype CallSequence a
-  = CallSequence [CallTree a]
+  = CallSequence (Sequence.Seq (CallTree a))
   deriving (Eq, Semigroup, Monoid, Foldable, Functor, Traversable, Generic)
 
 instance A.ToJSON a => A.ToJSON (CallSequence a)
@@ -242,7 +242,9 @@ instance A.FromJSON a => A.FromJSON (CallSequence a)
 instance (Show a) => Show (CallSequence a) where
   showsPrec p (CallSequence ts) =
     showParen (p > sequencePrec)
-    $ appEndo $ mconcat $ intersperse (Endo $ showString " ; ") (map (Endo . showsPrec sequencePrec) ts)
+    $ appEndo $ fold
+    $ Sequence.intersperse (Endo $ showString " ; ")
+    $ fmap (Endo . showsPrec sequencePrec) ts
     where
       sequencePrec = 1
 
@@ -251,17 +253,19 @@ callSequenceLength :: CallSequence a -> Int
 callSequenceLength (CallSequence ts) = length ts
 
 callSequenceIndex :: Int -> CallSequence a -> CallTree a
-callSequenceIndex index (CallSequence ts) = ts !! index
+callSequenceIndex index (CallSequence ts) = Sequence.index ts index
 
 nullCallSequence :: CallSequence a -> Bool
-nullCallSequence (CallSequence ts) = null ts
+nullCallSequence (CallSequence ts) = Sequence.null ts
 
 singletonCallSequence :: CallTree a -> CallSequence a
-singletonCallSequence t = CallSequence [t]
+singletonCallSequence = CallSequence . Sequence.singleton
 
 viewlCallSequence :: CallSequence a -> Maybe (CallTree a, CallSequence a)
-viewlCallSequence (CallSequence []) = Nothing
-viewlCallSequence (CallSequence (t:ts)) = Just (t, CallSequence ts)
+viewlCallSequence (CallSequence ts) =
+  case Sequence.viewl ts of
+    (t Sequence.:< ts') -> Just (t, CallSequence ts')
+    Sequence.EmptyL -> Nothing
 
 -- | Traverse the @CallTree a@ elements of a @CallSequence b@
 --
