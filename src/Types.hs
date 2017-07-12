@@ -190,7 +190,7 @@ data CallTree a
   | Choice !(CallTree a) !(CallTree a)
   | Call !a
   | Nop
-  deriving (Foldable, Functor, Traversable)
+  deriving (Eq, Foldable, Functor, Traversable)
 
 simplifyCallTree :: CallTree a -> CallTree a
 simplifyCallTree (Sequence a b) = case (simplifyCallTree a, simplifyCallTree b) of

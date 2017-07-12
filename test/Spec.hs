@@ -7,6 +7,7 @@ module Main
 import Args (Args(Args))
 import Check.Permissions (Function(..))
 import Control.Concurrent.Chan (getChanContents, newChan)
+import Data.Foldable (traverse_)
 import Data.List (nub)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
@@ -23,9 +24,14 @@ import Types
 import qualified Args
 import qualified Check.Permissions as Permissions
 import qualified Config
+import qualified Data.ByteString.Builder
 import qualified Data.Map as Map
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy.Encoding
+import qualified Data.Text.Encoding.Error
+import qualified DumpCallMap
 import qualified Graph
+import qualified ParseCallMap
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -205,6 +211,22 @@ spec = do
               ] -> True
             _ -> False
 
+  describe "with callmap serialization" $ do
+    it "roundtrips"  $ do
+      let
+        withFile fp = defArgs { Args.translationUnitPaths = [fp] }
+      traverse_ (callMapRoundtripTest . withFile)
+        ["test/disallowed-permission.c"
+        , "test/disallowed-with-subject.c"
+        , "test/invalid-permission-action.c"
+        , "test/invalid-permission-actions.c"
+        , "test/missing-implicit-permission.c"
+        , "test/missing-permission.c"
+        , "test/missing-permissions-conditional.c"
+        , "test/permission-with-subject.c"
+        , "test/violated-restriction.c"
+        ]
+
 defArgs :: Args
 defArgs = Args
   { Args.preprocessorPath = "gcc"
@@ -222,26 +244,11 @@ wardTest
   :: Args
   -> (([(NodeInfo, Text)], [(NodeInfo, Text)], [(NodeInfo, Text)]) -> IO ())
   -> IO ()
-wardTest args check = do
-  let temporaryDirectory = Nothing
-  let preprocessor = newGCC $ Args.preprocessorPath args
-  parseResults <- forM (Args.translationUnitPaths args)
-    $ fmap (fmap (either (Left  . CSourceUnitParseError) (Right . CSourceProcessingUnit)))
-    $ parseCFile preprocessor temporaryDirectory
-    $ Args.preprocessorFlags args
-  config <- do
-    parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
-    case sequence parsedConfigs of
-      Right configs -> pure $ mconcat configs
-      Left parseError -> error $ "bad config in test: " ++ show parseError
-  case sequence parseResults of
-    Left parseError -> assertFailure $ "Parse error: " ++ show parseError
-    Right translationUnits -> do
+wardTest args check =
+  wardTestWithCallmaps args $ \ config callMap -> do
       entriesChan <- newChan
       flip runLogger entriesChan $ do
         let
-          callMap = Graph.fromProcessingUnits config
-            (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
               { functionPos = pos
@@ -256,3 +263,34 @@ wardTest args check = do
         endLog
       entries <- nub . map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)
+
+wardTestWithCallmaps :: Args -> (Config -> CallMap -> IO b) -> IO b
+wardTestWithCallmaps args check = do
+  let temporaryDirectory = Nothing
+  let preprocessor = newGCC $ Args.preprocessorPath args
+  parseResults <- forM (Args.translationUnitPaths args)
+    $ fmap (fmap (either (Left  . CSourceUnitParseError) (Right . CSourceProcessingUnit)))
+    $ parseCFile preprocessor temporaryDirectory
+    $ Args.preprocessorFlags args
+  config <- do
+    parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
+    case sequence parsedConfigs of
+      Right configs -> pure $ mconcat configs
+      Left parseError -> error $ "bad config in test: " ++ show parseError
+  case sequence parseResults of
+    Left parseError -> assertFailure $ "Parse error: " ++ show parseError
+    Right translationUnits -> do
+      let
+        callMap = Graph.fromProcessingUnits config
+          (zip (Args.translationUnitPaths args) translationUnits)
+      check config callMap
+
+callMapRoundtripTest :: Args -> IO ()
+callMapRoundtripTest args =
+  wardTestWithCallmaps args $ \ _config callMap ->
+  let
+    bs = Data.ByteString.Builder.toLazyByteString (DumpCallMap.encodeCallMap callMap)
+    txt = Data.Text.Lazy.Encoding.decodeUtf8With Data.Text.Encoding.Error.lenientDecode bs
+    parseResult = ParseCallMap.fromSource (show (Args.translationUnitPaths args)) txt
+  in
+    parseResult `shouldBe` (Right callMap)
