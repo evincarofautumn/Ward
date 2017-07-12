@@ -14,7 +14,9 @@ import Control.Monad.IO.Class (MonadIO(..))
 import qualified Data.Aeson as A
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
+import Data.List (intersperse)
 import Data.Map.Strict (Map)
+import Data.Monoid ((<>), Endo(..))
 import qualified Data.Semigroup
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
@@ -161,7 +163,7 @@ type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 -- | Built from a 'NameMap', a 'CallMap' contains a compact 'CallTree' for each
 -- function instead of the whole definition.
 --
-newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallTree Ident, PermissionActionSet) }
+newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallSequence Ident, PermissionActionSet) }
   deriving (Generic)
 
 instance Show CallMap where
@@ -185,34 +187,24 @@ instance Semigroup CallMap where
     where
       mergeCallMapItems (n1, c1, p1) (_n2, c2, p2) =
           (n1, c, p1 <> p2)
-        where c | notNop c1 && notNop c2 =
-                  if c1 /= c2
-                  then error $ "Multiple definitions of "++show n1
-                  else c1
-                | otherwise = simplifyCallTree (Sequence c1 c2)
-              notNop Nop = False
-              notNop _ = True
+        where
+          c | not (nullCallSequence c1) && not (nullCallSequence c2) =
+              if c1 /= c2
+              then error $ "Multiple definitions of "++show n1
+              else c1
+            | nullCallSequence c1 = c2
+            | otherwise = c1
 
 instance A.FromJSON CallMap
 instance A.ToJSON CallMap
 
 -- | A 'CallTree' describes the calls that a function makes in its definition. A
--- 'Call' leaf node refers to a call site; a 'Nop' leaf refers to a statement
--- that makes no calls, such as @x = y;@. 'Nop' leaves are optimised out before
--- checking; see 'simplifyCallTree'.
---
--- 'Sequence' refers to functions that are called in order, such as:
---
--- > // Sequence (Call "foo") (Call "bar")
--- > foo ();
--- > bar ();
---
--- Sequences are handled one after the other during checking.
+-- 'Call' leaf node refers to a call site.
 --
 -- 'Choice' refers to functions that are called in different branches of an @if@
 -- or @?:@, such as:
 --
--- > // Sequence (Call "foo") (Choice (Call "bar") (Call "baz"))
+-- > // [ Call "foo", Choice [Call "bar"] [Call "baz"] ] :: CallSequence
 -- > if (foo ()) {
 -- >   bar ();
 -- > } else {
@@ -224,49 +216,61 @@ instance A.ToJSON CallMap
 -- merging their effects on the context.
 --
 data CallTree a
-  = Sequence !(CallTree a) !(CallTree a)
-  | Choice !(CallTree a) !(CallTree a)
+  = Choice !(CallSequence a) !(CallSequence a)
   | Call !a
-  | Nop
+  -- | Abort  - the Monoid identity for 'CallTree' with respect to the 'Choice' operator
   deriving (Eq, Foldable, Functor, Traversable, Generic)
 
 instance A.ToJSON ident => A.ToJSON (CallTree ident)
 instance A.FromJSON ident => A.FromJSON (CallTree ident)
 
-simplifyCallTree :: CallTree a -> CallTree a
-simplifyCallTree (Sequence a b) = case (simplifyCallTree a, simplifyCallTree b) of
-  (a', Nop) -> a'
-  (Nop, b') -> b'
-  (a', b') -> Sequence a' b'
-simplifyCallTree (Choice a b) = case (simplifyCallTree a, simplifyCallTree b) of
-  (a', Nop) -> a'
-  (Nop, b') -> b'
-  (a', b') -> Choice a' b'
-simplifyCallTree leaf = leaf
-
 instance (Show a) => Show (CallTree a) where
   showsPrec p = \ case
-    Sequence a b -> showParen (p > sequencePrec)
-      $ showsPrec sequencePrec a . showString " ; " . showsPrec sequencePrec b
     Choice a b -> showParen (p > choicePrec)
       $ showsPrec choicePrec a . showString " | " . showsPrec choicePrec b
     Call ident -> shows ident
-    Nop -> id
     where
-      sequencePrec = 1
       choicePrec = 0
 
-callTreeBreadth :: CallTree a -> Int
-callTreeBreadth (Sequence a b) = callTreeBreadth a + callTreeBreadth b
-callTreeBreadth Choice{} = 1  -- Not sure if this is correct.
-callTreeBreadth Call{} = 1
-callTreeBreadth Nop = 0
+newtype CallSequence a
+  = CallSequence [CallTree a]
+  deriving (Eq, Semigroup, Monoid, Foldable, Functor, Traversable, Generic)
 
-callTreeIndex :: Int -> CallTree a -> CallTree a
-callTreeIndex index tree = breadthFirst tree !! index
-  where
-    breadthFirst (Sequence a b) = breadthFirst a <> breadthFirst b
-    breadthFirst t = [t]
+instance A.ToJSON a => A.ToJSON (CallSequence a)
+instance A.FromJSON a => A.FromJSON (CallSequence a)
+
+instance (Show a) => Show (CallSequence a) where
+  showsPrec p (CallSequence ts) =
+    showParen (p > sequencePrec)
+    $ appEndo $ mconcat $ intersperse (Endo $ showString " ; ") (map (Endo . showsPrec sequencePrec) ts)
+    where
+      sequencePrec = 1
+
+
+callSequenceLength :: CallSequence a -> Int
+callSequenceLength (CallSequence ts) = length ts
+
+callSequenceIndex :: Int -> CallSequence a -> CallTree a
+callSequenceIndex index (CallSequence ts) = ts !! index
+
+nullCallSequence :: CallSequence a -> Bool
+nullCallSequence (CallSequence ts) = null ts
+
+singletonCallSequence :: CallTree a -> CallSequence a
+singletonCallSequence t = CallSequence [t]
+
+viewlCallSequence :: CallSequence a -> Maybe (CallTree a, CallSequence a)
+viewlCallSequence (CallSequence []) = Nothing
+viewlCallSequence (CallSequence (t:ts)) = Just (t, CallSequence ts)
+
+-- | Traverse the @CallTree a@ elements of a @CallSequence b@
+--
+-- This is a @Traversal@ in the sense of the lens library (although we do not depend on lens)
+-- @@@
+--   callTreesOfCallSequence :: Traversal (CallSequence a) (CallSequence b) (CallTree a) (CallTree b)
+-- @@@
+callTreesOfCallSequence :: Applicative f => (CallTree a -> f (CallTree b)) -> CallSequence a -> f (CallSequence b)
+callTreesOfCallSequence f (CallSequence ts) = CallSequence <$> traverse f ts
 
 --------------------------------------------------------------------------------
 -- Input
