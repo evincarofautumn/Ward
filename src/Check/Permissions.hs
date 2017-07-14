@@ -447,14 +447,27 @@ processCallTree graphLookup (Call (Just call)) i v = do
             -- Update permission presence (has/lacks/conflicts) according to
             -- permission actions (needs/denies/grants/revokes).
             --
-            -- Note how this works with the forward-propagation above: if a call
-            -- site grants or revokes a permission for which information was
-            -- propagated from the previous call site, the old information is
-            -- /replaced/ to indicate the change in permissions; it doesn't
-            -- generate a conflict unless there's actually conflicting info. And
-            -- if some permission is irrelevant to a particular call, it just
-            -- passes on through.
-            for_ (HashSet.toList callPermissions) $ \ callPermission -> do
+            for_ (HashSet.toList callPermissions) $ permissionsPresenceFromCalleeActions i v
+
+processCallTree _ (Call Nothing) _ _ =
+                -- Assume an unknown call has irrelevant permissions. I just know this
+                -- is going to bite me later.
+                pure ()
+
+
+
+-- Note how this works with the forward-propagation above: if a call
+-- site grants or revokes a permission for which information was
+-- propagated from the previous call site, the old information is
+-- /replaced/ to indicate the change in permissions; it doesn't
+-- generate a conflict unless there's actually conflicting info. And
+-- if some permission is irrelevant to a particular call, it just
+-- passes on through.
+permissionsPresenceFromCalleeActions :: Int
+                                     -> IOVector (HashSet.HashSet PermissionPresence)
+                                     -> PermissionAction
+                                     -> IO ()
+permissionsPresenceFromCalleeActions i v callPermission = do
               case callPermission of
 
                 -- If a call needs (resp. denies) a permission, its call site
@@ -511,12 +524,6 @@ processCallTree graphLookup (Call (Just call)) i v = do
 
                 -- FIXME: Verify this.
                 Waive{} -> pure ()
-
-processCallTree _ (Call Nothing) _ _ =
-                -- Assume an unknown call has irrelevant permissions. I just know this
-                -- is going to bite me later.
-                pure ()
-
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
