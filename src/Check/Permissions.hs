@@ -468,32 +468,26 @@ permissionsPresenceFromCalleeActions :: Int
                                      -> PermissionAction
                                      -> IO ()
 permissionsPresenceFromCalleeActions i v callPermission = do
-              case callPermission of
+  flip (IOVector.modify v) i $ \current -> case callPermission of
 
                 -- If a call needs (resp. denies) a permission, its call site
                 -- must have (lack) it. If the call site already lacks (has) it,
                 -- we record the conflict.
 
                 Need p -> do
-                  current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v (<> site (Has p)) i
+                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
+                    else (<> site (Has p)) current
 
                 Use p -> do
-                  current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v (<> HashSet.fromList [Has p, Uses p]) i
+                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
+                    else (<> HashSet.fromList [Has p, Uses p]) current
 
                 Deny p -> do
-                  current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v
-                      ((<> site (Conflicts p))
-                        . HashSet.delete (Has p)
-                        . HashSet.delete (Uses p)) i
-                    else IOVector.modify v ((<> site (Lacks p))) i
+                    then ((<> site (Conflicts p)) . HashSet.delete (Has p) . HashSet.delete (Uses p)) current
+                    else ((<> site (Lacks p))) current
 
                 -- If a call grants (resp. revokes) a permission, its call site
                 -- must lack (have) it, and the following call site must have
@@ -503,27 +497,21 @@ permissionsPresenceFromCalleeActions i v callPermission = do
                 -- in permission state.
 
                 Grant p -> do
-                  current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v
-                      ((<> site (Conflicts p))
-                        . HashSet.delete (Has p)
-                        . HashSet.delete (Uses p)) i
-                    else IOVector.modify v ((<> site (Lacks p))) i
-                  IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
+                    then ((<> site (Conflicts p)) . HashSet.delete (Has p) . HashSet.delete (Uses p)) current
+                    else ((<> site (Lacks p))) current
 
                 Revoke p -> do
-                  current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
-                    else IOVector.modify v ((<> site (Has p))) i
-                  IOVector.modify v
-                    ((<> site (Lacks p))
-                      . HashSet.delete (Has p)
-                      . HashSet.delete (Uses p)) $ succ i
+                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
+                    else ((<> site (Has p))) current
 
                 -- FIXME: Verify this.
-                Waive{} -> pure ()
+                Waive{} -> current
+  flip (IOVector.modify v) (succ i) $ case callPermission of
+    Grant p -> ((<> site (Has p)) . HashSet.delete (Lacks p))
+    Revoke p -> ((<> site (Lacks p)) . HashSet.delete (Has p) . HashSet.delete (Uses p))
+    _ -> id
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
