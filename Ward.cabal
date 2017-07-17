@@ -15,7 +15,8 @@ cabal-version:       >=1.10
 executable ward
   hs-source-dirs:      src
   main-is:             Main.hs
-  other-modules:       Args
+  other-modules:       Algebra.Algebra
+                     , Args
                      , Check.Permissions
                      , Config
                      , DumpCallMap
@@ -51,7 +52,8 @@ test-suite test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      src, test
   main-is:             Spec.hs
-  other-modules:       Args
+  other-modules:       Algebra.Algebra
+                     , Args
                      , Check.Permissions
                      , Config
                      , DumpCallMap
