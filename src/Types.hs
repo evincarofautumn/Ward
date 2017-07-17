@@ -218,7 +218,7 @@ instance A.ToJSON CallMap
 data CallTree a
   = Choice !(CallSequence a) !(CallSequence a)
   | Call !a
-  -- | Abort  - the Monoid identity for 'CallTree' with respect to the 'Choice' operator
+  -- Abort  - the Monoid identity for 'CallTree' with respect to the 'Choice' operator
   deriving (Eq, Foldable, Functor, Traversable, Generic)
 
 instance A.ToJSON ident => A.ToJSON (CallTree ident)

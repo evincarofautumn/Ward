@@ -33,10 +33,10 @@ import qualified Data.Vector.Mutable as IOVector
 
 -- | A function given as input to the permission checking algorithm.
 data Function = Function
-
+  {
   -- | The source location where the function was declared, or where it was
   -- defined if there was no declaration.
-  { functionPos :: !NodeInfo
+    functionPos :: !NodeInfo
 
   -- | The name of the function, prefixed with its file path if @static@.
   , functionName :: !FunctionName
@@ -52,10 +52,10 @@ data Function = Function
 -- | A node in the call graph, representing a function and information about
 -- permissions at each of its call sites.
 data Node = Node
-
+  {
   -- | The permission actions of the function. This is set in the initial state
   -- by annotations, and updated as permissions are propagated.
-  { nodePermissions :: !(IORef PermissionActionSet)
+    nodePermissions :: !(IORef PermissionActionSet)
 
   -- | The annotated permission actions of the function.
   , nodeAnnotations :: !(IORef PermissionActionSet)
