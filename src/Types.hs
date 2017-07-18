@@ -9,11 +9,13 @@
 
 module Types where
 
+import Algebra.Algebra
 import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
 import qualified Data.Aeson as A
 import Data.Foldable (fold)
 import Data.HashSet (HashSet)
+import Data.HashMap.Strict (HashMap)
 import Data.Hashable (Hashable(..))
 import Data.Map.Strict (Map)
 import Data.Monoid ((<>), Endo(..))
@@ -26,6 +28,7 @@ import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
 import qualified Language.C.Parser as CParser
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.Map.Strict as Map
 import qualified Data.Sequence as Sequence
 import qualified Data.Text as Text
@@ -111,45 +114,195 @@ type PermissionActionSet = HashSet PermissionAction
 -- used during permission checking, inferred from 'PermissionAction's and the
 -- 'CallTree' of each function.
 --
--- * @'Has' p@: This call site has access to permission @p@. This appears when a
+-- The permission information present at each site is a product of two
+-- lattices: the 'Usage' lattice and the 'Capability' lattice.
+--
+-- Usage tracks the intrinsic consumption of permissions (ie, those call sites
+-- that make use of a permission (e.g. a call to lock a mutex intrinsically
+-- uses the lock permission).  Usage is a simple binary lattice:
+--
+-- @
+--               Uses
+--                |
+--                |
+--            UsageUnknown (==bottom)
+-- @
+--
+-- Capability tracks the potential to make use of a permisson.
+--
+-- * @'CapHas'@: This call site has access to permission @p@. This appears when a
 --   call @need@s @p@, before it @revoke@s @p@, or after it @grant@s @p@.
 --
--- * @'Uses' p@: This call site makes use of permission @p@.
---
--- * @'Lacks' p@: This call site does not have access to permission @p@. This
+-- * @'CapLacks'@: This call site does not have access to permission @p@. This
 --   appears after a call @revoke@s @p@, or before it @grant@s @p@.
 --
--- * @'Conflicts' p@: This call site was inferred to have conflicting
+-- * @'CapConflict'@: This call site was inferred to have conflicting
 --   information about @p@, that is, both 'Has' and 'Lacks' were inferred. All
 --   'Conflicts' are reported as errors after checking.
 --
-data PermissionPresence
-  = Has !PermissionName
-  | Uses !PermissionName
-  | Lacks !PermissionName
-  | Conflicts !PermissionName
-  deriving (Eq, Generic, Ord)
-
+-- * @'CapUnknown'@: We don't know anything about this call site yet.
+--
+-- Capability forms a diamon lattice:
+--
+-- @
+--             CapConflict (== top)
+--              /      \\
+--             /        \\
+--         CapHas     CapLacks
+--             \\        /
+--              \\      /
+--             CapUnknown (== bottom)
+-- @
+--
+--
+-- 'PermissionPresence' is a product 'BoundedJoinSemiLattice' (ie, @'bottom' ==
+-- 'PermissionPresence' bottom bottom@, similarly for top, and meets and joins
+-- are taken componentwise.)
+data PermissionPresence = PermissionPresence
+  { presenceUsage :: !Usage
+  , presenceCapability :: !Capability
+  }
+  deriving (Eq, Generic)
 
 instance Show PermissionPresence where
-  show = \ case
-    Has p -> concat ["has(", show p, ")"]
-    Uses p -> concat ["uses(", show p, ")"]
-    Lacks p -> concat ["lacks(", show p, ")"]
-    Conflicts p -> concat ["conflicts(", show p, ")"]
+  show p =
+    let
+      showUsage UsageUnknown = ""
+      showUsage Uses = "&uses"
+    in case p of
+      PermissionPresence UsageUnknown CapHas -> "has"
+      PermissionPresence Uses CapHas -> "uses"
+      PermissionPresence u CapLacks -> "lacks" ++ showUsage u
+      PermissionPresence u CapConflict -> "conflicts" ++ showUsage u
+      PermissionPresence u CapUnknown -> "unknown" ++ showUsage u
+
+instance JoinSemiLattice PermissionPresence where
+  PermissionPresence u c \/ PermissionPresence u' c' = PermissionPresence (u \/ u') (c \/ c')
+
+instance BoundedJoinSemiLattice PermissionPresence where
+  bottom = PermissionPresence bottom bottom
+
+instance MeetSemiLattice PermissionPresence where
+  PermissionPresence u c /\ PermissionPresence u' c' = PermissionPresence (u /\ u') (c /\ c')
+
+-- | See 'PermissionPresence'
+data Usage = UsageUnknown | Uses
+  deriving (Eq, Ord, Generic, Show)
+
+instance JoinSemiLattice Usage where
+  (\/) = max
+
+instance BoundedJoinSemiLattice Usage where
+  bottom = UsageUnknown
+
+instance MeetSemiLattice Usage where
+  (/\) = min
+
+-- | See 'PermisisonPresence'
+data Capability = CapUnknown | CapHas | CapLacks | CapConflict
+  deriving (Eq, Generic, Show)
+
+instance JoinSemiLattice Capability where
+  c          \/ c' | c == c' = c
+  CapUnknown \/ c            = c
+  c          \/ CapUnknown   = c
+  _          \/ _            = CapConflict
+
+instance BoundedJoinSemiLattice Capability where
+  bottom = CapUnknown
+
+instance MeetSemiLattice Capability where
+  c           /\ c' | c == c' = c
+  CapConflict /\ c            = c
+  c           /\ CapConflict  = c
+  _           /\ _            = CapUnknown
+
+
+instance PartialOrd Usage where
+  leq = joinLeq
+
+instance PartialOrd Capability where
+  leq = joinLeq
+
+instance PartialOrd PermissionPresence where
+  leq = joinLeq
+
+instance Hashable Usage
+
+instance Hashable Capability
 
 instance Hashable PermissionPresence
 
--- | A set of permission presences; each call site has one of these.
---
-type PermissionPresenceSet = HashSet PermissionPresence
+has :: PermissionPresence
+has = PermissionPresence bottom CapHas
 
-presencePermission :: PermissionPresence -> PermissionName
-presencePermission = \ case
-  Has p -> p
-  Uses p -> p
-  Lacks p -> p
-  Conflicts p -> p
+lacks :: PermissionPresence
+lacks = PermissionPresence bottom CapLacks
+
+uses :: PermissionPresence
+uses = PermissionPresence Uses bottom
+
+conflicts :: PermissionPresence
+conflicts = PermissionPresence bottom CapConflict
+
+-- | Convenience function for testing whether we found a conflict.
+conflicting :: PermissionPresence -> Bool
+conflicting p = presenceCapability p == CapConflict
+
+-- | A mapping from permission names to permission presences; each call site
+-- has one of these.
+--
+-- The 'PermissionPresenceSet' enjoys a lattice structure that derives
+-- pointwise from the lattice structucture on 'PermissonPresence' - the order
+-- is given by keyset inclusion and when keys are present in both maps, the
+-- corresponding values must be ordered with respect to the
+-- 'PermissionPresence' 'PartialOrd'.  The bottom element is the empty set.
+--
+-- (Note we don't derive 'Monoid' instances because the underlying 'HashMap'
+-- 'Monoid' instance has a non-commutative ('<>') operation which we never want
+-- to use - we always want ('\/'))
+newtype PermissionPresenceSet =
+  PermissionPresenceSet
+  {
+    unPermissionPresenceSet :: HashMap PermissionName PermissionPresence
+  }
+  deriving (Eq, JoinSemiLattice, BoundedJoinSemiLattice)
+
+-- | Given a 'PermissionName' look up its presence in the given
+-- 'PermissionPresenceSet' or 'bottom' if its not in the set.
+lookupPresence :: PermissionName -> PermissionPresenceSet -> PermissionPresence
+lookupPresence pn = HashMap.lookupDefault bottom pn . unPermissionPresenceSet
+
+-- | Given a 'PermissionName' and a modification function,
+-- update the 'PermissionPresenceSet' with the modified presence.
+-- 
+-- * If the presence was previously not in the set, the modification function will be passed 'bottom'.
+-- * If the modification function returns 'bottom', the element is /not/ removed.
+modifyPresence :: PermissionName -> (PermissionPresence -> PermissionPresence) -> PermissionPresenceSet -> PermissionPresenceSet
+modifyPresence pn f =
+  PermissionPresenceSet . HashMap.alter f' pn . unPermissionPresenceSet
+  where
+    f' Nothing = Just $ f bottom
+    f' (Just p) = Just $ f p
+
+-- | Construct a 'PermissionPresenceSet' mapping the single element 
+singletonPresence
+  :: PermissionName -> PermissionPresence -> PermissionPresenceSet
+singletonPresence pn = PermissionPresenceSet . HashMap.singleton pn
+
+-- | Get the 'PermisionName's from the given 'PermissionPresenceSet
+presenceKeys :: PermissionPresenceSet -> [PermissionName]
+presenceKeys = HashMap.keys . unPermissionPresenceSet
+
+-- | Keep just the 'conflicting' elements of the 'PermissionPresenceSet'
+conflictingPresence :: PermissionPresenceSet -> PermissionPresenceSet
+conflictingPresence =
+  PermissionPresenceSet . HashMap.filter conflicting . unPermissionPresenceSet
+
+-- | Return @True@ iff the given 'PermissionPresenceSet' is empty.
+nullPresence :: PermissionPresenceSet -> Bool
+nullPresence = HashMap.null . unPermissionPresenceSet
+
 
 --------------------------------------------------------------------------------
 -- Call graphs
@@ -270,9 +423,9 @@ viewlCallSequence (CallSequence ts) =
 -- | Traverse the @CallTree a@ elements of a @CallSequence b@
 --
 -- This is a @Traversal@ in the sense of the lens library (although we do not depend on lens)
--- @@@
+-- @
 --   callTreesOfCallSequence :: Traversal (CallSequence a) (CallSequence b) (CallTree a) (CallTree b)
--- @@@
+-- @
 callTreesOfCallSequence :: Applicative f => (CallTree a -> f (CallTree b)) -> CallSequence a -> f (CallSequence b)
 callTreesOfCallSequence f (CallSequence ts) = CallSequence <$> traverse f ts
 
@@ -500,7 +653,7 @@ instance Monoid Declaration where
 -- restriction is reported along with the human-readable /description/ if any.
 --
 data Restriction = Restriction
-  { restCondition :: !PermissionPresence
+  { restName :: !PermissionName
   , restExpression :: !Expression
   , restDescription :: !(Maybe Description)
   }
@@ -518,8 +671,9 @@ instance Show Restriction where
     Nothing -> implication
     where
       implication = concat
-        [ show $ restCondition r
-        , " -> "
+        [ "uses("
+        , show $ restName r
+        , ") -> "
         , show $ restExpression r
         ]
 
@@ -527,7 +681,7 @@ instance Show Restriction where
 -- the context ('Context') or a combination of these using Boolean operations
 -- 'And', 'Or', and 'Not'.
 data Expression
-  = Context !PermissionPresence
+  = Context !PermissionName !PermissionPresence
   | !Expression `And` !Expression
   | !Expression `Or` !Expression
   | Not !Expression
@@ -538,11 +692,11 @@ infixr 3 `And`
 infixr 2 `Or`
 
 instance IsString Expression where
-  fromString = Context . Has . fromString
+  fromString = flip Context has . fromString
 
 instance Show Expression where
   showsPrec p = \ case
-    Context presence -> shows presence
+    Context nm presence -> shows presence . showParen True (shows nm)
     a `And` b -> showParen (p > andPrec)
       $ showsPrec andPrec a . showString " & " . showsPrec andPrec b
     a `Or` b -> showParen (p > orPrec)

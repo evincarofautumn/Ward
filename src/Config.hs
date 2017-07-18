@@ -74,7 +74,7 @@ expression = orExpression
     orExpression = foldr1 Or <$> andExpression `sepBy1` operator '|'
     andExpression = foldr1 And <$> term `sepBy1` operator '&'
     term = choice
-      [ Context . Has <$> permission
+      [ Context <$> permission <*> pure has
       , Not <$> (operator '!' *> term)
       , parenthesized expression
       ]

@@ -10,13 +10,14 @@ module Check.Permissions
   , validatePermissions
   ) where
 
+import Algebra.Algebra
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (for_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
-import Data.List (foldl', isSuffixOf, nub, sort)
+import Data.List (foldl', isSuffixOf)
 import Data.Monoid ((<>), Any(..))
 import Data.Vector.Mutable (IOVector)
 import Language.C.Data.Ident (Ident)
@@ -24,6 +25,7 @@ import Language.C.Data.Node (NodeInfo, posOfNode)
 import Language.C.Data.Position (posFile)
 import Types
 import qualified Data.Graph as Graph
+import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
@@ -264,7 +266,7 @@ process functions config = do
 
     restrictions =
       [ Restriction
-        { restCondition = Uses name
+        { restName = name
         , restExpression = expr
         , restDescription = desc
         }
@@ -363,7 +365,7 @@ propagatePermissionsNode graphLookup (node, newInitialSite, _name, callVertices)
 
         -- We initialize the first call site of the function according to its
         -- permission actions.
-        IOVector.modify sites (\old -> old <> newInitialSite) 0
+        IOVector.modify sites (\old -> old \/ newInitialSite) 0
 
         -- Next, we infer information about permissions at each call site in the
         -- function by traversing its call tree.
@@ -390,7 +392,7 @@ processCallSequence graphLookup s i v =
             processCallSequence graphLookup b (succ i) v
 
             -- Once we've collected permission information for each call site
-            -- and propagated it forward, we propagate all /non-conflicting/
+            -- and propagated it forward, we propagate all new or /newly-conflicting/
             -- information /backward/ through the whole sequence; this has the
             -- effect of filling in the 0th call site (before the first call) in
             -- a function with any relevant permissions from the body of the
@@ -406,11 +408,13 @@ processCallSequence graphLookup s i v =
               for_ (reverse [1 .. IOVector.length v - 1]) $ \ statement -> do
                 after <- IOVector.read v statement
                 flip (IOVector.modify v) (pred statement) $ \ before
-                  -> before <> (foldr HashSet.delete after
-                    $ concatMap (\p -> [Has p, Lacks p, Uses p])
-                    $ map presencePermission
-                    $ HashSet.toList before)
+                  -> before \/ permissionDiff after before
     Nothing -> pure ()
+  where
+    permissionDiff (PermissionPresenceSet x) (PermissionPresenceSet y) =
+      PermissionPresenceSet (HashMap.differenceWith keepConflicting x y)
+    keepConflicting pafter _pbefore =
+      if conflicting pafter then Just pafter else Nothing
 
 -- | Given a call tree and the permission presence set at the current site (as
 -- an index into a vector of sites), update the current site and the following one
@@ -421,27 +425,26 @@ processCallTree :: (Graph.Vertex -> (Node, t1, t)) -- graphLookup
                 -> IOVector Site                   -- current sequence
                 -> IO ()
 processCallTree graphLookup (Choice a b) i v = do
-            callsA <- IOVector.replicate (callSequenceLength a + 1) mempty
-            callsB <- IOVector.replicate (callSequenceLength b + 1) mempty
+            callsA <- IOVector.replicate (callSequenceLength a + 1) bottom
+            callsB <- IOVector.replicate (callSequenceLength b + 1) bottom
             processCallSequence graphLookup a 0 callsA
             processCallSequence graphLookup b 0 callsB
             beforeA <- IOVector.read callsA 0
             afterA <- IOVector.read callsA (IOVector.length callsA - 1)
             beforeB <- IOVector.read callsB 0
             afterB <- IOVector.read callsB (IOVector.length callsB - 1)
-            IOVector.write v i (beforeA <> beforeB)
-            IOVector.write v (succ i) (afterA <> afterB)
+            IOVector.write v i (beforeA \/ beforeB)
+            IOVector.write v (succ i) (afterA \/ afterB)
 
 processCallTree graphLookup (Call (Just call)) i v = do
             let (Node { nodePermissions = callPermissionsRef }, _, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
 
-            -- We propagate non-conflicting permissions forward in the call tree
+            -- We propagate permissions forward in the call tree
             -- at each step. This ensures that the /final/ call site (after the
             -- last call) contains relevant permissions from the body of the
             -- function.
             IOVector.write v (succ i)
-              . HashSet.filter (not . conflicting)
               =<< IOVector.read v i
 
             -- Update permission presence (has/lacks/conflicts) according to
@@ -464,7 +467,7 @@ processCallTree _ (Call Nothing) _ _ =
 -- if some permission is irrelevant to a particular call, it just
 -- passes on through.
 permissionsPresenceFromCalleeActions :: Int
-                                     -> IOVector (HashSet.HashSet PermissionPresence)
+                                     -> IOVector Site
                                      -> PermissionAction
                                      -> IO ()
 permissionsPresenceFromCalleeActions i v callPermission = do
@@ -474,20 +477,11 @@ permissionsPresenceFromCalleeActions i v callPermission = do
                 -- must have (lack) it. If the call site already lacks (has) it,
                 -- we record the conflict.
 
-                Need p -> do
-                  if Lacks p `HashSet.member` current
-                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
-                    else (<> site (Has p)) current
+                Need p -> current \/ singletonPresence p has
 
-                Use p -> do
-                  if Lacks p `HashSet.member` current
-                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
-                    else (<> HashSet.fromList [Has p, Uses p]) current
+                Use p -> current \/ singletonPresence p (has \/ uses)
 
-                Deny p -> do
-                  if Has p `HashSet.member` current
-                    then ((<> site (Conflicts p)) . HashSet.delete (Has p) . HashSet.delete (Uses p)) current
-                    else ((<> site (Lacks p))) current
+                Deny p -> current \/ singletonPresence p lacks -- FIXME: drop use of p if p is a conflict
 
                 -- If a call grants (resp. revokes) a permission, its call site
                 -- must lack (have) it, and the following call site must have
@@ -496,22 +490,28 @@ permissionsPresenceFromCalleeActions i v callPermission = do
                 -- already lacks (has) it, we replace it to reflect the change
                 -- in permission state.
 
-                Grant p -> do
-                  if Has p `HashSet.member` current
-                    then ((<> site (Conflicts p)) . HashSet.delete (Has p) . HashSet.delete (Uses p)) current
-                    else ((<> site (Lacks p))) current
+                Grant p ->
+                  current \/ singletonPresence p lacks -- FIXME: drop use of p if p is a conflict
 
-                Revoke p -> do
-                  if Lacks p `HashSet.member` current
-                    then ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) current
-                    else ((<> site (Has p))) current
+                Revoke p -> current \/ singletonPresence p has
 
                 -- FIXME: Verify this.
                 Waive{} -> current
   flip (IOVector.modify v) (succ i) $ case callPermission of
-    Grant p -> ((<> site (Has p)) . HashSet.delete (Lacks p))
-    Revoke p -> ((<> site (Lacks p)) . HashSet.delete (Has p) . HashSet.delete (Uses p))
+    Grant p -> strongUpdateCap p CapHas Uses
+    Revoke p -> strongUpdateCap p CapLacks UsageUnknown
     _ -> id
+
+strongUpdateCap :: PermissionName -> Capability -> Usage -> PermissionPresenceSet -> PermissionPresenceSet
+strongUpdateCap pn cap usageUB =
+  PermissionPresenceSet . HashMap.alter alteration pn . unPermissionPresenceSet
+  where
+    alteration mold =
+      let
+        usage = usageUB /\ case mold of
+                  Nothing -> bottom
+                  Just old -> presenceUsage old
+      in Just $ PermissionPresence usage cap
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
@@ -522,8 +522,7 @@ permissionsFromCallSites permissionRef initialFinal@(initial, final) = do
 
             -- For each "relevant" permission P in first & last call sites:
             let
-              relevantPermissions = nub $ map presencePermission
-                $ HashSet.toList initial <> HashSet.toList final
+              relevantPermissions = presenceKeys (initial \/ final)
 
             let
               derivedActions = HashSet.fromList $ mconcat $ map (derivePermissionActions initialFinal) relevantPermissions
@@ -549,14 +548,14 @@ derivePermissionActions (initial,final) p =
     -- (NB. The seemingly redundant side conditions here prevent spurious
     -- error messages from inconsistent permissions.)
     needsRevokes =
-      if (Has p `HashSet.member` initial && not (Lacks p `HashSet.member` initial))
+      if (has `leq` lookupPresence p initial && not (lacks `leq` lookupPresence p initial))
       then -- When the initial state has P, the function needs P.
         needs <> revokes
       else
         mempty
     grants =
-      if (Lacks p `HashSet.member` initial && not (Has p `HashSet.member` initial))
-         && (Has p `HashSet.member` final && not (Lacks p `HashSet.member` final))
+      if (lacks `leq` lookupPresence p initial && not (has `leq` lookupPresence p initial))
+         && (has `leq` lookupPresence p final && not (lacks `leq` lookupPresence p final))
       then
         -- When the initial state lacks P but the final state has P, the
         -- function grants P.
@@ -566,7 +565,7 @@ derivePermissionActions (initial,final) p =
 
     needs = [Need p]
     revokes =
-      if (Lacks p `HashSet.member` final && not (Has p `HashSet.member` final))
+      if (lacks `leq` lookupPresence p final && not (has `leq` lookupPresence p final))
       then 
         -- When the initial state has P, but the final state lacks P,
         -- the function revokes P.
@@ -691,12 +690,11 @@ reportCallSites :: [Restriction]
                 -> Logger ()
 reportCallSites restrictions (sites, callees, name, pos) = do
       -- Report call sites with conflicting information.
-      let conflicts = HashSet.filter conflicting $ mconcat sites
-      unless (HashSet.null conflicts) $ do
+      let conflicts = getJoin $ foldMap (Join . conflictingPresence) sites
+      unless (nullPresence conflicts) $ do
         record True $ Error pos $ Text.concat $
           [ "conflicting information for permissions "
-          , Text.pack $ show $ sort $ map presencePermission
-            $ HashSet.toList conflicts
+          , Text.pack $ show $ presenceKeys conflicts
           , " in '"
           , name
           , "'"
@@ -736,7 +734,7 @@ edgesFromFunctions functions = do
     let name = functionName function
     permissions <- newIORef $ functionPermissions function
     annotations <- newIORef $ functionPermissions function
-    sites <- IOVector.replicate (callSequenceLength (functionCalls function) + 1) mempty
+    sites <- IOVector.replicate (callSequenceLength (functionCalls function) + 1) bottom
     let
       node =
         ( Node
@@ -756,13 +754,12 @@ edgesFromFunctions functions = do
 -- | Evaluates a restriction in a context.
 evalRestriction :: PermissionPresenceSet -> Restriction -> Bool
 evalRestriction context restriction
-  | restCondition restriction `HashSet.member` context = go $ restExpression restriction
+  | uses `leq` lookupPresence (restName restriction) context = go $ restExpression restriction -- FIXME: what if the context lacks the given restriction or uses it? ignore?
   | otherwise = True
   where
     go = \ case
       -- Since 'Conflicts' represents both 'Has' and 'Lacks', it matches both.
-      Context p -> p `HashSet.member` context
-        || Conflicts (presencePermission p) `HashSet.member` context
+      Context pn pval -> pval `leq` lookupPresence pn context
       a `And` b -> go a && go b
       a `Or` b -> go a || go b
       Not a -> not $ go a
@@ -798,26 +795,25 @@ validatePermissions config =
 -- compute the permission presense available on entry to the function.
 initialSite :: [PermissionAction] -> Site
 initialSite =
-  foldMap $ \ permissionAction -> case permissionAction of
-  -- If a function needs or revokes a permission, then its first call
-  -- site must have that permission.
-  Need p -> site $ Has p
-  Use p -> site $ Uses p
-  Revoke p -> site $ Has p
+  getJoin . foldMap siteAction
+  where
+    siteAction :: PermissionAction -> Join Site
+    siteAction permissionAction = case permissionAction of
+      -- If a function needs or revokes a permission, then its first call
+      -- site must have that permission.
+      Need p -> site p has
+      Use p -> site p uses
+      Revoke p -> site p has
 
-  -- If a function grants or denies a permission, then its first call
-  -- site must lack that permission.
-  Grant p -> site $ Lacks p
-  Deny p -> site $ Lacks p
+      -- If a function grants or denies a permission, then its first call
+      -- site must lack that permission.
+      Grant p -> site p lacks
+      Deny p -> site p lacks
 
-  -- FIXME: Verify this.
-  Waive{} -> mempty
+      -- FIXME: Verify this.
+      Waive{} -> mempty
 
 -- | Convenience function for building call site info.
-site :: PermissionPresence -> Site
-site = HashSet.singleton
+site :: PermissionName -> PermissionPresence -> Join Site
+site pn = Join . singletonPresence pn
 
--- | Convenience function for testing whether we found a conflict.
-conflicting :: PermissionPresence -> Bool
-conflicting Conflicts{} = True
-conflicting _ = False
