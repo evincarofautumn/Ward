@@ -201,7 +201,7 @@ spec = do
           (unlines $ "expected permission error but got:" : map show errors)
           $ case errors of
             [ (_, "restriction \"cannot take foo lock while bar lock is held\" (uses(lock_foo) -> !has(bar_locked)) violated in 'locks_wrong_nesting' at \"lock_bar\"")
-              , (_, "conflicting information for permissions [foo_locked,lock_foo] in 'locks_foo_recursively'")
+              , (_, "conflicting information for permissions [lock_foo,foo_locked] in 'locks_foo_recursively'")
               , (_, "restriction \"cannot take foo lock recursively\" (uses(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' before first call")
               , (_, "restriction \"cannot take foo lock recursively\" (uses(lock_foo) -> !has(foo_locked)) violated in 'locks_foo_recursively' at \"lock_foo\"")
               , (_, "missing required annotation on 'missing_foo_locked'; annotation [] is missing: [need(foo_locked)]")
