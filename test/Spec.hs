@@ -264,7 +264,7 @@ wardTest args check =
       entries <- nub . map fromJust . takeWhile isJust <$> getChanContents entriesChan
       check (partitionEntries entries)
 
-wardTestWithCallmaps :: Args -> (Config -> CallMap -> IO b) -> IO b
+wardTestWithCallmaps :: Args -> (Config -> CallMap -> IO ()) -> IO ()
 wardTestWithCallmaps args check = do
   let temporaryDirectory = Nothing
   let preprocessor = newGCC $ Args.preprocessorPath args
