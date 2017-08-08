@@ -404,7 +404,7 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             -- FIXME: I think we could do this purely, because only the result
             -- at index 0 should matter at this point.
             when (i == 0) $ do
-              for_ (reverse [1 .. IOVector.length v - 2]) $ \ statement -> do
+              for_ (reverse [1 .. IOVector.length v - 1]) $ \ statement -> do
                 after <- IOVector.read v statement
                 flip (IOVector.modify v) (pred statement) $ \ before
                   -> before <> (foldr HashSet.delete after
