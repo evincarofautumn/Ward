@@ -456,7 +456,10 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                 Deny p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                    then IOVector.modify v
+                      ((<> site (Conflicts p))
+                        . HashSet.delete (Has p)
+                        . HashSet.delete (Uses p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
 
                 -- If a call grants (resp. revokes) a permission, its call site
@@ -469,7 +472,10 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                 Grant p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Has p)) i
+                    then IOVector.modify v
+                      ((<> site (Conflicts p))
+                        . HashSet.delete (Has p)
+                        . HashSet.delete (Uses p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
@@ -478,7 +484,10 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                   if Lacks p `HashSet.member` current
                     then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v ((<> site (Has p))) i
-                  IOVector.modify v ((<> site (Lacks p)) . HashSet.delete (Has p)) $ succ i
+                  IOVector.modify v
+                    ((<> site (Lacks p))
+                      . HashSet.delete (Has p)
+                      . HashSet.delete (Uses p)) $ succ i
 
                 -- FIXME: Verify this.
                 Waive{} -> pure ()
