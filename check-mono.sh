@@ -1,50 +1,90 @@
 #!/bin/bash
 
 mono_path="$HOME/Projects/mono"
+preprocessor_flags="\
+	-P -I$mono_path \
+	-P -I$mono_path/eglib/src \
+	-P -I$mono_path/mono \
+	-P -I/usr/local/opt/openssl/include \
+	-P -DHAVE_SGEN_GC \
+	-P -DSUPPRESSION_DIR= \
+	-P -fno-blocks \
+	-P -D_XOPEN_SOURCE"
+
 # profile_flags="+RTS -p -hr -RTS"
 profile_flags=""
 
+translation_units="\
+	$mono_path/mono/sgen/sgen-alloc.c \
+	$mono_path/mono/sgen/sgen-array-list.c \
+	$mono_path/mono/sgen/sgen-cardtable.c \
+	$mono_path/mono/sgen/sgen-debug.c \
+	$mono_path/mono/sgen/sgen-descriptor.c \
+	$mono_path/mono/sgen/sgen-fin-weak-hash.c \
+	$mono_path/mono/sgen/sgen-gc.c \
+	$mono_path/mono/sgen/sgen-gchandles.c \
+	$mono_path/mono/sgen/sgen-gray.c \
+	$mono_path/mono/sgen/sgen-hash-table.c \
+	$mono_path/mono/sgen/sgen-internal.c \
+	$mono_path/mono/sgen/sgen-layout-stats.c \
+	$mono_path/mono/sgen/sgen-los.c \
+	$mono_path/mono/sgen/sgen-marksweep.c \
+	$mono_path/mono/sgen/sgen-memory-governor.c \
+	$mono_path/mono/sgen/sgen-nursery-allocator.c \
+	$mono_path/mono/sgen/sgen-pinning-stats.c \
+	$mono_path/mono/sgen/sgen-pinning.c \
+	$mono_path/mono/sgen/sgen-pointer-queue.c \
+	$mono_path/mono/sgen/sgen-protocol.c \
+	$mono_path/mono/sgen/sgen-qsort.c \
+	$mono_path/mono/sgen/sgen-simple-nursery.c \
+	$mono_path/mono/sgen/sgen-split-nursery.c \
+	$mono_path/mono/sgen/sgen-thread-pool.c \
+	$mono_path/mono/sgen/sgen-workers.c"
+
+function mtime() {
+	stat -f'%c' "$1"
+}
+
+# Emit a graph file for each translation unit
+echo "Generating call graphs..." >&2
+for translation_unit in $translation_units; do
+	translation_unit_modified="$(mtime $translation_unit)"
+	if [ -f $translation_unit.graph ]; then
+		graph_modified="$(mtime $translation_unit.graph)"
+	else
+		graph_modified=0
+	fi
+	if [ "$translation_unit_modified" -lt "$graph_modified" ]; then
+		echo "Call graph for $translation_unit is up to date" >&2
+	else
+		echo "Generating call graph for $translation_unit..." >&2
+		time stack exec ward \
+			-- \
+			cc \
+			--mode=graph \
+			--config=mono.config \
+			$translation_unit \
+			$preprocessor_flags \
+			$profile_flags \
+			> $translation_unit.graph
+		echo "Generated $translation_unit.graph" >&2
+	fi
+done
+
+graphs=""
+for translation_unit in $translation_units; do
+	graphs="$graphs $translation_unit.graph"
+done
+
+# Check all graph files together
+echo "Checking call graphs..." >&2
 stack exec ward \
 	-- \
-	gcc \
+	cc \
 	--mode=compiler \
 	--config=mono.config \
-	\
-	"$mono_path/mono/sgen/sgen-alloc.c" \
-	"$mono_path/mono/sgen/sgen-array-list.c" \
-	"$mono_path/mono/sgen/sgen-cardtable.c" \
-	"$mono_path/mono/sgen/sgen-debug.c" \
-	"$mono_path/mono/sgen/sgen-descriptor.c" \
-	"$mono_path/mono/sgen/sgen-fin-weak-hash.c" \
-	"$mono_path/mono/sgen/sgen-gc.c" \
-	"$mono_path/mono/sgen/sgen-gchandles.c" \
-	"$mono_path/mono/sgen/sgen-gray.c" \
-	"$mono_path/mono/sgen/sgen-hash-table.c" \
-	"$mono_path/mono/sgen/sgen-internal.c" \
-	"$mono_path/mono/sgen/sgen-layout-stats.c" \
-	"$mono_path/mono/sgen/sgen-los.c" \
-	"$mono_path/mono/sgen/sgen-marksweep.c" \
-	"$mono_path/mono/sgen/sgen-memory-governor.c" \
-	"$mono_path/mono/sgen/sgen-nursery-allocator.c" \
-	"$mono_path/mono/sgen/sgen-pinning-stats.c" \
-	"$mono_path/mono/sgen/sgen-pinning.c" \
-	"$mono_path/mono/sgen/sgen-pointer-queue.c" \
-	"$mono_path/mono/sgen/sgen-protocol.c" \
-	"$mono_path/mono/sgen/sgen-qsort.c" \
-	"$mono_path/mono/sgen/sgen-simple-nursery.c" \
-	"$mono_path/mono/sgen/sgen-split-nursery.c" \
-	"$mono_path/mono/sgen/sgen-thread-pool.c" \
-	"$mono_path/mono/sgen/sgen-workers.c" \
-	\
-	-P"-I$mono_path" \
-	-P"-I$mono_path/eglib/src" \
-	-P"-I$mono_path/mono" \
-	-P"-I/usr/local/opt/openssl/include" \
-	-P"-DHAVE_SGEN_GC" \
-	-P"-DSUPPRESSION_DIR=" \
-	-P"-fno-blocks" \
-    -P"-D_XOPEN_SOURCE" \
-    $profile_flags
+	$graphs \
+	$profile_flags
 
 # "$mono_path/mono/metadata/appdomain.c"
 # "$mono_path/mono/metadata/assembly.c"
