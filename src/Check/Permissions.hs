@@ -17,7 +17,7 @@ import Data.Foldable (for_, toList)
 import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
-import Data.List (isSuffixOf, nub, sort)
+import Data.List (foldl', isSuffixOf, nub, sort)
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.These
@@ -310,7 +310,11 @@ process functions config = do
   -- at call sites, missing annotations (from enforcements), and violated
   -- restrictions.
 
-  for_ sccs $ reportSCC requiredAnnotations restrictions graphLookup
+  for_ sccs $ reportSCC
+    implicitPermissions
+    requiredAnnotations
+    restrictions
+    graphLookup
 
   -- That's all, folks!
 
@@ -573,12 +577,14 @@ derivePermissionActions (initial,final) p =
 ----------------------------------------------------------------------
 
 
-reportSCC :: [(FunctionName, PermissionActionSet)]
-          -> [Restriction]
-          -> (Graph.Vertex -> (Node, FunctionName, [FunctionName]))
-          -> Tree.Tree Graph.Vertex
-          -> Logger ()
-reportSCC requiredAnnotations restrictions graphLookup scc = do
+reportSCC
+  :: [PermissionName]
+  -> [(FunctionName, PermissionActionSet)]
+  -> [Restriction]
+  -> (Graph.Vertex -> (Node, FunctionName, [FunctionName]))
+  -> Tree.Tree Graph.Vertex
+  -> Logger ()
+reportSCC implicitPermissions requiredAnnotations restrictions graphLookup scc = do
   -- For each function in each SCC:
     for_ scc $ \vertex -> do
       let
@@ -591,68 +597,89 @@ reportSCC requiredAnnotations restrictions graphLookup scc = do
           a <- readIORef $ nodeAnnotations node
           p <- readIORef $ nodePermissions node
           return (a,p)
-        reportDefinition restrictions requiredPermissions (annotations, permissions, name, pos)
+        reportDefinition
+          implicitPermissions
+          restrictions
+          requiredPermissions
+          (annotations, permissions, name, pos)
       do
         sites <- liftIO $ fmap Vector.toList $ Vector.freeze $ nodeSites node
         reportCallSites restrictions (sites, nodeCalls node, name, pos)
 
 
--- | Report violations at the function definitino due to missing required annotations,
+-- | Report violations at the function definition due to missing required annotations,
 -- annotations that miss inferred permissions, or inconsistent inferred permissions.
-reportDefinition :: [Restriction]
-           -> Maybe PermissionActionSet
-           -> (PermissionActionSet, PermissionActionSet, FunctionName, NodeInfo)
-           -> Logger ()
-reportDefinition restrictions requiredPermissions (annotations, permissions, name, pos) = do
-      -- If a function has required annotations, ensure the annotation
-      -- mentions all inferred permissions.
-      for_ requiredPermissions $ \ userAnnotated -> do
-        -- I think this should generally be equal to 'inferredNotDeclared'.
-        let implicit = HashSet.difference permissions userAnnotated
-        unless (HashSet.null implicit) $ do
-          record True $ Error pos $ Text.concat
-            [ "missing required annotation on '"
-            , name
-            , "'; annotation "
-            , Text.pack $ show $ HashSet.toList userAnnotated
-            , " is missing: "
-            , Text.pack $ show $ HashSet.toList implicit
-            ]
+reportDefinition
+  :: [PermissionName]
+  -> [Restriction]
+  -> Maybe PermissionActionSet
+  -> (PermissionActionSet, PermissionActionSet, FunctionName, NodeInfo)
+  -> Logger ()
+reportDefinition implicitPermissions restrictions requiredPermissions (annotations, permissions, name, pos) = do
 
-      -- If a function has annotations...
-      unless (HashSet.null annotations) $ do
-        let inferredNotDeclared = HashSet.difference permissions annotations
+  -- If a function has required annotations, ensure the annotation mentions all
+  -- inferred permissions. Implicit permissions don't need to be annotated.
+  let implicit = HashSet.fromList $ map Need implicitPermissions
+  for_ requiredPermissions $ \ userAnnotated -> do
+    let
+      requiredNotAnnotated = foldl' HashSet.difference permissions
+        ([ userAnnotated
+        , implicit
+        ] :: [PermissionActionSet])
+    unless (HashSet.null requiredNotAnnotated) $ do
+      record True $ Error pos $ Text.concat
+        [ "missing required annotation on '"
+        , name
+        , "'; annotation "
+        , Text.pack $ show $ HashSet.toList userAnnotated
+        , " is missing: "
+        , Text.pack $ show $ HashSet.toList requiredNotAnnotated
+        ]
 
-        -- ...then those annotations must mention all inferred permissions.
-        unless (HashSet.null inferredNotDeclared) $ do
-          record True $ Error pos $ Text.concat
-            [ "annotation on '"
-            , name
-            , "' is missing these permissions: "
-            , Text.pack $ show $ HashSet.toList inferredNotDeclared
-            ]
+  -- If a function has annotations...
+  unless (HashSet.null annotations) $ do
+    let
+      inferredNotDeclared = foldl' HashSet.difference permissions
+        ([ annotations
+        , implicit
+        ] :: [PermissionActionSet])
 
-        -- Likewise, the inferred permission actions must be consistent with the
-        -- declared permission actions.
-        for_ (HashSet.toList permissions) $ \ permission -> do
-          let
-            mInconsistency = case permission of
-              Need p
-                | Grant p `HashSet.member` permissions
-                -> Just (Grant p)
-              Grant p
-                | Revoke p `HashSet.member` permissions
-                -> Just (Revoke p)
-              _ -> Nothing
-          flip (maybe (pure ())) mInconsistency $ \ inconsistency -> do
-            record True $ Error pos $ Text.concat
-              [ "inferred inconsistent permissions for '"
-              , name
-              , "': "
-              , Text.pack $ show permission
-              , " is incompatible with "
-              , Text.pack $ show inconsistency
-              ]
+    -- ...then those annotations must mention all inferred permissions.
+    unless (HashSet.null inferredNotDeclared) $ do
+      record True $ Error pos $ Text.concat
+        [ "annotation on '"
+        , name
+        , "' is missing these permissions: "
+        , Text.pack $ show $ HashSet.toList inferredNotDeclared
+        ]
+
+    -- Likewise, the inferred permission actions must be consistent with the
+    -- declared permission actions.
+    for_ (HashSet.toList permissions) $ \ permission -> do
+      let
+        inconsistencies = case permission of
+          Need p
+            -> [Grant p | Grant p `HashSet.member` permissions]
+            <> [Waive p | Waive p `HashSet.member` permissions]
+            <> [Deny p | Deny p `HashSet.member` permissions]
+          -- WTB disjunctive patterns
+          Revoke p
+            -> [Grant p | Grant p `HashSet.member` permissions]
+            <> [Waive p | Waive p `HashSet.member` permissions]
+            <> [Deny p | Deny p `HashSet.member` permissions]
+          Grant p
+            -> [Revoke p | Revoke p `HashSet.member` permissions]
+            <> [Need p | Need p `HashSet.member` permissions]
+          _ -> []
+      for_ inconsistencies $ \ inconsistency -> do
+        record True $ Error pos $ Text.concat
+          [ "inferred inconsistent permissions for '"
+          , name
+          , "': "
+          , Text.pack $ show permission
+          , " is incompatible with "
+          , Text.pack $ show inconsistency
+          ]
 
 -- | Report violations at the calls in the given function due to
 -- callee functions with conflicting permissions or violated restrictions.

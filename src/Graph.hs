@@ -353,10 +353,18 @@ extractDeclaratorPermissionActions
   -> [(Ident, PermissionActionSet)]
 extractDeclaratorPermissionActions = runIdentity . foldrM go []
   where
-    -- TODO: Do something with derived declarators?
-    go (Just (CDeclr (Just ident) _derived _ attributes _), _, _) acc = do
-      let permissionActions = extractPermissionActions attributes
-      return $ (ident, permissionActions) : acc
+    go (Just (CDeclr (Just ident) derivedDeclarators _ attributes _), _, _) acc = do
+      let
+        permissionActions = extractPermissionActions attributes
+        -- We only extract permission actions for function declarators;
+        -- otherwise, extern variables would be included, and we don't currently
+        -- have a defined semantics for permissions attached to variables.
+        functionPermissionActions =
+          [ extractPermissionActions funAttrs
+          | CFunDeclr _parameters funAttrs _ <- derivedDeclarators
+          ]
+      pure $ if null functionPermissionActions then acc
+        else (ident, mconcat functionPermissionActions <> permissionActions) : acc
     go _ acc = return acc
 
 select :: (Monad m) => [a] -> ListT m a

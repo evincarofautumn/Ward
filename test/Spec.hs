@@ -183,16 +183,15 @@ spec = do
             [(_, "conflicting information for permissions [baz] in 'bar'")] -> True
             _ -> False
 
-    it "reports missing implicit permission" $ do
+    it "does not report missing implicit permission" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/missing-implicit-permission.c"]
         , Args.configFilePaths = ["test/missing-implicit-permission.config"]
         } $ \ (_notes, _warnings, errors) -> do
         assertBool
-          (unlines $ "expected permission error but got:" : map show errors)
+          (unlines $ "expected no error but got:" : map show errors)
           $ case errors of
-            [(_, "missing required annotation on 'foo';\
-                 \ annotation [] is missing: [need(baz)]")] -> True
+            [] -> True
             _ -> False
 
     it "reports descriptions of violated restrictions" $ do
