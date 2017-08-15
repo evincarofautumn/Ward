@@ -5,6 +5,8 @@ preprocessor_flags="\
 	-P -I$mono_path \
 	-P -I$mono_path/eglib/src \
 	-P -I$mono_path/mono \
+	-P -I$mono_path/mono/eglib \
+	-P -I$mono_path/mono/eglib/src \
 	-P -I/usr/local/opt/openssl/include \
 	-P -DHAVE_SGEN_GC \
 	-P -DSUPPRESSION_DIR= \
