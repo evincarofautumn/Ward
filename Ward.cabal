@@ -18,10 +18,10 @@ executable ward
   other-modules:       Args
                      , Check.Permissions
                      , Config
-                     , Graph
-                     , Types
                      , DumpCallMap
+                     , Graph
                      , ParseCallMap
+                     , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
                      , array
@@ -48,6 +48,9 @@ test-suite test
   other-modules:       Args
                      , Check.Permissions
                      , Config
+                     , DumpCallMap
+                     , Graph
+                     , ParseCallMap
                      , Types
   ghc-options:         -Wall
   build-depends:       base
