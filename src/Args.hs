@@ -17,6 +17,7 @@ import Types
 data Args = Args
   { configFilePaths :: [FilePath]
   , outputAction :: !OutputAction
+  , outputFilePath :: !(Maybe FilePath)
   , preprocessorFlags :: [String]
   , preprocessorPath :: FilePath
   , quiet :: Bool
@@ -44,6 +45,15 @@ args = runA $ proc () -> do
     , short 'M'
     , metavar "html|compiler|graph"
     , help "Output mode style (default 'compiler').  The 'graph' mode does not run analyses, just parses the source files and emits inferred call graph."
+    ] -< ()
+
+  outputFilePath <- opt
+    (fmap (\ case { Just "-" -> Nothing; other -> other })
+      . optional . strOption)
+    [ long "output"
+    , short 'O'
+    , metavar "FILE"
+    , help "Write output to target FILE (default '-' = stdout)."
     ] -< ()
 
   configFilePaths <- opt (many . strOption)

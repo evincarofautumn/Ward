@@ -231,6 +231,7 @@ defArgs = Args
   { Args.preprocessorPath = "gcc"
   , Args.translationUnitPaths = []
   , Args.outputAction = AnalysisAction CompilerOutput
+  , Args.outputFilePath = Nothing
   , Args.preprocessorFlags = []
   , Args.configFilePaths = []
   , Args.quiet = False

@@ -11,11 +11,9 @@ import Control.Monad (unless)
 import Data.Bifunctor (Bifunctor(..))
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
-import qualified Language.C.Parser as CParser
 import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
 import System.Exit (exitFailure)
-import qualified System.FilePath as FP
 import System.IO (hPutStrLn, stderr, stdout)
 import Types
 import qualified Args
@@ -24,7 +22,10 @@ import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified DumpCallMap
 import qualified Graph
+import qualified Language.C.Parser as CParser
 import qualified ParseCallMap
+import qualified System.FilePath as FP
+import qualified System.IO as IO
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -109,7 +110,16 @@ dumpCallGraph :: Args.Args -> Config -> [ProcessingUnit] -> IO ()
 dumpCallGraph args config translationUnits = do
   let callMap = Graph.fromProcessingUnits config
         (zip (Args.translationUnitPaths args) translationUnits)
-  DumpCallMap.hPutCallMap stdout callMap
+  case Args.outputFilePath args of
+    Nothing -> DumpCallMap.hPutCallMap stdout callMap
+    Just path -> do
+      handle <- IO.openFile path IO.WriteMode
+      -- Binary mode and block buffering (here using the default block size) are
+      -- recommended in the ByteString documentation for hPutBuilder.
+      IO.hSetBinaryMode handle True
+      IO.hSetBuffering handle $ IO.BlockBuffering Nothing
+      DumpCallMap.hPutCallMap handle callMap
+      IO.hClose handle
 
 parseInput :: Args.Args -> FilePath -> IO (Either ProcessingUnitParseError ProcessingUnit)
 parseInput args path =

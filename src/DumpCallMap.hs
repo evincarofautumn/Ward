@@ -16,7 +16,7 @@ import qualified Data.Map as Map
 import Data.List (intersperse)
 import Data.Monoid (Monoid(..), (<>))
 import qualified Data.Text.Encoding as DTE
-import System.IO (Handle)
+import System.IO (Handle, hFlush)
 
 import Language.C.Data.Ident (Ident, identToString)
 import Language.C.Data.Node (NodeInfo, CNode(nodeInfo))
@@ -34,7 +34,9 @@ encodeCallMap = form "callmap" True . Map.foldMapWithKey encodeCallMapItem
 -- The representation preserves all the source attributes of the underlying C file.
 -- Identifiers are stored in UTF-8.
 hPutCallMap :: MonadIO m => Handle -> CallMap -> m ()
-hPutCallMap h = liftIO . B.hPutBuilder h . encodeCallMap
+hPutCallMap handle callMap = liftIO $ do
+  B.hPutBuilder handle $ encodeCallMap callMap
+  hFlush handle
 
 -- | @emit s nl b@ emits @"(s\nb)"@ if @nl@ is 'True' or @"(s b)"@ if @nl@ is 'False.
 form :: String -> Bool -> B.Builder -> B.Builder
