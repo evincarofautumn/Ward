@@ -1,6 +1,11 @@
 #!/bin/bash
 
-mono_path="$HOME/Projects/mono"
+if [ "$#" -ne 1 ]; then
+    echo "Usage: check-mono.sh <mono-path>" >&2
+    exit 1;
+fi
+
+mono_path="$1"; shift
 preprocessor_flags="\
 	-P -I$mono_path \
 	-P -I$mono_path/eglib/src \
