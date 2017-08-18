@@ -10,6 +10,7 @@ module Types where
 
 import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
+import Data.Function (on)
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
 import Data.Map (Map)
@@ -192,15 +193,18 @@ data CallTree a
   | Nop
   deriving (Eq, Foldable, Functor, Traversable)
 
+-- | Simplifies redundant @Nop@s in a 'CallTree'. They are redundant in
+-- sequences because they have no effect on the permission state; but not in
+-- choices, because /conditionally/ granting or revoking a permission is /not/
+-- the same as /always/ granting or revoking it, and this needs to be reported
+-- as a permission error.
+
 simplifyCallTree :: CallTree a -> CallTree a
 simplifyCallTree (Sequence a b) = case (simplifyCallTree a, simplifyCallTree b) of
   (a', Nop) -> a'
   (Nop, b') -> b'
   (a', b') -> Sequence a' b'
-simplifyCallTree (Choice a b) = case (simplifyCallTree a, simplifyCallTree b) of
-  (a', Nop) -> a'
-  (Nop, b') -> b'
-  (a', b') -> Choice a' b'
+simplifyCallTree (Choice a b) = (Choice `on` simplifyCallTree) a b
 simplifyCallTree leaf = leaf
 
 instance (Show a) => Show (CallTree a) where

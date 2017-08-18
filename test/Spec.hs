@@ -172,6 +172,28 @@ spec = do
                  \ annotation [] is missing: [need(baz)]")] -> True
             _ -> False
 
+    it "reports using a revoked permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/using-revoked-permission.c"]
+        , Args.configFilePaths = ["test/using-revoked-permission.config"]
+        } $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "conflicting information for permissions [safe] in 'test'")] -> True
+            _ -> False
+
+    it "reports conflict for conditional permission" $ do
+      wardTest defArgs
+        { Args.translationUnitPaths = ["test/conditional-permission.c"]
+        , Args.configFilePaths = ["test/conditional-permission.config"]
+        } $ \ (_notes, _warnings, errors) -> do
+        assertBool
+          (unlines $ "expected permission error but got:" : map show errors)
+          $ case errors of
+            [(_, "conflicting information for permissions [lock,locked] in 'test'")] -> True
+            _ -> False
+
     it "reports disallowed permission" $ do
       wardTest defArgs
         { Args.translationUnitPaths = ["test/disallowed-permission.c"]

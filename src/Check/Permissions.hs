@@ -388,8 +388,17 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             afterA <- IOVector.read callsA (IOVector.length callsA - 1)
             beforeB <- IOVector.read callsB 0
             afterB <- IOVector.read callsB (IOVector.length callsB - 1)
+            -- If the permissions aren't the same after the branches of a
+            -- conditional, we record a conflict for each permission that was
+            -- present in one but not the other.
+            let
+              gatherConflicts x y
+                = HashSet.map (Conflicts . presencePermission)
+                $ (x `HashSet.difference` y) <> (y `HashSet.difference` x)
             IOVector.write v i (beforeA <> beforeB)
-            IOVector.write v (succ i) (afterA <> afterB)
+            if afterA == afterB
+              then IOVector.write v (succ i) afterA
+              else IOVector.write v (succ i) $ gatherConflicts afterA afterB
 
           processCallTree s@(Sequence a b) i v = do
             processCallTree a i v
