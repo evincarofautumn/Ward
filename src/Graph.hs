@@ -73,26 +73,35 @@ joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
 prefixStatics path decls = map prefixOne decls
   where
+    statics :: [String]
     statics =
       [ name
-      | CFDefExt (CFunDef specifiers (CDeclr (Just (Ident name _ _)) _ _ _ _) _ _ _) <- decls
-      , CStatic _ : _ <- [[spec | CStorageSpec spec <- specifiers]]
+      | d <- decls
+      , name <- namesOfStaticDeclOrDefn d
       ]
+    -- Patch the name of a function definition or declaration that's been identified as static.
+    -- In function definitions, also patch all called function names in the function body.
+    prefixOne :: CExtDecl -> CExtDecl
     prefixOne decl = case decl of
       CFDefExt (CFunDef specifiers
-        declr@(CDeclr (Just (Ident name hash namePos)) derived lit attrs declrPos) parameters body defPos)
+        declr@(CDeclr (Just ident@(Ident name _ _)) derived lit attrs declrPos) parameters body defPos)
         | name `elem` statics
         -> CFDefExt (CFunDef specifiers (CDeclr (Just ident') derived lit attrs declrPos) parameters body' defPos)
         | otherwise
         -> CFDefExt (CFunDef specifiers declr parameters body' defPos)
         where
-          -- FIXME: Dunno if keeping the same hash is correct.
-          ident' = Ident (patchName name) hash namePos
+          ident' = patchIdent ident
           body' = everywhere (mkT patchStatement) body
+      CDeclExt (CDecl specifiers declarators declPos)
+        -> CDeclExt (CDecl specifiers (map patchDeclarator declarators) declPos)
       _ -> decl
 
     patchName :: String -> String
     patchName name = concat [path, "`", name]
+
+    patchIdent :: Ident -> Ident
+    patchIdent (Ident name hash namePos) =
+      Ident (patchName name) hash namePos
 
     patchStatement :: CStat -> CStat
     patchStatement = everywhere (mkT patchExpression)
@@ -104,6 +113,38 @@ prefixStatics path decls = map prefixOne decls
         -> CCall (CVar (Ident (patchName name) hash namePos) varPos)
           arguments callPos
       expr -> expr
+
+    patchDeclarator:: (Maybe CDeclr, Maybe CInit, Maybe CExpr) -> (Maybe CDeclr, Maybe CInit, Maybe CExpr)
+    patchDeclarator t = case t of
+      (Just (CDeclr (Just ident@(Ident name _ _)) ds@(CFunDeclr {} : _) lit attrs posDeclr), initlz, sz)
+        | name `elem` statics
+        -> (Just (CDeclr (Just ident') ds lit attrs posDeclr), initlz, sz)
+          where
+            ident' = patchIdent ident
+      _ -> t
+
+namesOfStaticDeclOrDefn :: CExtDecl -> [String]
+namesOfStaticDeclOrDefn =
+  \ case
+    CFDefExt (CFunDef specifiers (CDeclr (Just (Ident name _ _)) _ _ _ _) _ _ _)
+      | hasStaticSpecifiers specifiers -> [name]
+    CDeclExt (CDecl specifiers declarators _)
+      | hasStaticSpecifiers specifiers -> concatMap (\(d,_,_) -> namesOfFunDeclarator d) declarators
+    _ -> []
+
+namesOfFunDeclarator :: Maybe (CDeclarator a) -> [String]
+namesOfFunDeclarator (Just (CDeclr (Just (Ident name _ _)) (CFunDeclr {} : _) _ _ _)) = [name]
+namesOfFunDeclarator _ = []
+
+hasStaticSpecifiers :: [CDeclarationSpecifier a] -> Bool
+hasStaticSpecifiers specifiers =
+  let (storageSpecs, _, _, _, _, _) = partitionDeclSpecs specifiers
+  in any isStaticSpec storageSpecs
+  where
+    isStaticSpec :: CStorageSpecifier a -> Bool
+    isStaticSpec (CStatic {}) = True
+    isStaticSpec _ = False
+
 
 ----
 
