@@ -81,7 +81,7 @@ encodeNodeInfo ni =
   else let
     position = encodePositionSpan (Node.posOfNode ni) (Node.getLastTokenPos ni)
     in case Node.nameOfNode ni of
-         Just name -> form "node" False (encodeName name <> position)
+         Just name -> form "node" False (encodeName name <> space <> position)
          Nothing -> form "onlypos" False position
 
 encodeName :: Name -> B.Builder
