@@ -47,6 +47,11 @@ function mtime() {
 	stat -f'%c' "$1"
 }
 
+function run_ward() {
+    #cabal run ward -- "$@"
+    stack exec ward -- "$@"
+}
+
 # Emit a graph file for each translation unit
 echo "Generating call graphs..." >&2
 for translation_unit in $translation_units; do
@@ -60,7 +65,7 @@ for translation_unit in $translation_units; do
 		echo "Call graph for $translation_unit is up to date" >&2
 	else
 		echo "Generating call graph for $translation_unit..." >&2
-		time stack exec ward \
+		time run_ward \
 			-- \
 			cc \
 			--mode=graph \
@@ -80,7 +85,7 @@ done
 
 # Check all graph files together
 echo "Checking call graphs..." >&2
-stack exec ward \
+run_ward \
 	-- \
 	cc \
 	--mode=compiler \
