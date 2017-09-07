@@ -73,19 +73,23 @@ joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
 prefixStatics path decls = map prefixOne decls
   where
-    statics :: [String]
+    statics :: HashSet.HashSet String
     statics =
+      HashSet.fromList
       [ name
       | d <- decls
       , name <- namesOfStaticDeclOrDefn d
       ]
+    isStatic :: String -> Bool
+    isStatic a = HashSet.member a statics
+
     -- Patch the name of a function definition or declaration that's been identified as static.
     -- In function definitions, also patch all called function names in the function body.
     prefixOne :: CExtDecl -> CExtDecl
     prefixOne decl = case decl of
       CFDefExt (CFunDef specifiers
         declr@(CDeclr (Just ident@(Ident name _ _)) derived lit attrs declrPos) parameters body defPos)
-        | name `elem` statics
+        | isStatic name
         -> CFDefExt (CFunDef specifiers (CDeclr (Just ident') derived lit attrs declrPos) parameters body' defPos)
         | otherwise
         -> CFDefExt (CFunDef specifiers declr parameters body' defPos)
@@ -109,7 +113,7 @@ prefixStatics path decls = map prefixOne decls
     patchExpression :: CExpr -> CExpr
     patchExpression = \ case
       CCall (CVar (Ident name hash namePos) varPos) arguments callPos
-        | name `elem` statics
+        | isStatic name
         -> CCall (CVar (Ident (patchName name) hash namePos) varPos)
           arguments callPos
       expr -> expr
@@ -117,7 +121,7 @@ prefixStatics path decls = map prefixOne decls
     patchDeclarator:: (Maybe CDeclr, Maybe CInit, Maybe CExpr) -> (Maybe CDeclr, Maybe CInit, Maybe CExpr)
     patchDeclarator t = case t of
       (Just (CDeclr (Just ident@(Ident name _ _)) ds@(CFunDeclr {} : _) lit attrs posDeclr), initlz, sz)
-        | name `elem` statics
+        | isStatic name
         -> (Just (CDeclr (Just ident') ds lit attrs posDeclr), initlz, sz)
           where
             ident' = patchIdent ident
