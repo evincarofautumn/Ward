@@ -1,11 +1,24 @@
 #!/bin/bash
 
-if [ "$#" -ne 1 ]; then
-    echo "Usage: check-mono.sh <mono-path>" >&2
-    exit 1;
+function usage() {
+    echo "Usage: check-mono.sh (graph|source) <mono-path>" >&2
+}
+
+if [ "$#" -ne 2 ]; then
+	usage
+    exit 1
+fi
+
+mode="$1"; shift
+
+if [ "x$mode" != "xgraph" -a "x$mode" != "xsource" ]; then
+	echo "Invalid mode '$mode'."
+	usage
+	exit 1
 fi
 
 mono_path="$1"; shift
+
 preprocessor_flags="\
 	-P -I$mono_path \
 	-P -I$mono_path/eglib/src \
@@ -48,6 +61,36 @@ translation_units="\
 	$mono_path/mono/sgen/sgen-thread-pool.c \
 	$mono_path/mono/sgen/sgen-workers.c"
 
+#	$mono_path/eglib/src/garray.c
+#	$mono_path/eglib/src/gbytearray.c
+#	$mono_path/eglib/src/gdate-unix.c
+#	$mono_path/eglib/src/gdir-unix.c
+#	$mono_path/eglib/src/gerror.c
+#	$mono_path/eglib/src/gfile-posix.c
+#	$mono_path/eglib/src/gfile-unix.c
+#	$mono_path/eglib/src/gfile.c
+#	$mono_path/eglib/src/ghashtable.c
+#	$mono_path/eglib/src/giconv.c
+#	$mono_path/eglib/src/glist.c
+#	$mono_path/eglib/src/gmarkup.c
+#	$mono_path/eglib/src/gmem.c
+#	$mono_path/eglib/src/gmisc-unix.c
+#	$mono_path/eglib/src/gmodule-unix.c
+#	$mono_path/eglib/src/goutput.c
+#	$mono_path/eglib/src/gpath.c
+#	$mono_path/eglib/src/gpattern.c
+#	$mono_path/eglib/src/gptrarray.c
+#	$mono_path/eglib/src/gqsort.c
+#	$mono_path/eglib/src/gqueue.c
+#	$mono_path/eglib/src/gshell.c
+#	$mono_path/eglib/src/gslist.c
+#	$mono_path/eglib/src/gspawn.c
+#	$mono_path/eglib/src/gstr.c
+#	$mono_path/eglib/src/gstring.c
+#	$mono_path/eglib/src/gtimer-unix.c
+#	$mono_path/eglib/src/gunicode.c
+#	$mono_path/eglib/src/gutf8.c
+
 function mtime() {
 	stat -f'%c' "$1"
 }
@@ -57,45 +100,61 @@ function run_ward() {
     stack exec ward -- "$@"
 }
 
-# Emit a graph file for each translation unit
-echo "Generating call graphs..." >&2
-for translation_unit in $translation_units; do
-	translation_unit_modified="$(mtime $translation_unit)"
-	if [ -f $translation_unit.graph ]; then
-		graph_modified="$(mtime $translation_unit.graph)"
-	else
-		graph_modified=0
-	fi
-	if [ "$translation_unit_modified" -lt "$graph_modified" ]; then
-		echo "Call graph for $translation_unit is up to date" >&2
-	else
-		echo "Generating call graph for $translation_unit..." >&2
-		time run_ward \
-			-- \
-			cc \
-			--mode=graph \
-			--config=mono.config \
-			$translation_unit \
-			$preprocessor_flags \
-			$profile_flags \
-			> $translation_unit.graph
-		echo "Generated $translation_unit.graph" >&2
-	fi
-done
+function fsize() {
+	stat -f'%z' "$1"
+}
 
-graphs=""
-for translation_unit in $translation_units; do
-	graphs="$graphs $translation_unit.graph"
-done
+inputs=""
+if [ "$mode" = "graph" ]; then
+	# Emit a graph file for each translation unit
+	echo "Generating call graphs..." >&2
+	for translation_unit in $translation_units; do
+		translation_unit_modified="$(mtime $translation_unit)"
+		if [ -f "$translation_unit.graph" ]; then
+			graph_size="$(fsize "$translation_unit.graph")"
+			if [ "x$graph_size" = "x" ]; then
+				graph_modified=0
+			elif [ "$graph_size" -eq 0 ]; then
+				graph_modified=0
+			else
+				graph_modified="$(mtime $translation_unit.graph)"
+			fi
+		else
+			graph_modified=0
+		fi
+		if [ "$translation_unit_modified" -lt "$graph_modified" ]; then
+			echo "Call graph for $translation_unit is up to date" >&2
+		else
+			echo "Generating call graph for $translation_unit..." >&2
+			time run_ward \
+				 cc \
+				 --mode=graph \
+				 --config=mono.config \
+				 "$translation_unit" \
+				 $preprocessor_flags \
+				 $profile_flags \
+				 --output "$translation_unit.graph"
+			echo "Generated $translation_unit.graph ($(fsize "$translation_unit.graph") bytes)" >&2
+		fi
+	done
+
+	for translation_unit in $translation_units; do
+		inputs="$inputs $translation_unit.graph"
+	done
+elif [ "$mode" = "source" ]; then
+	for translation_unit in $translation_units; do
+		inputs="$inputs $translation_unit"
+	done
+fi
 
 # Check all graph files together
-echo "Checking call graphs..." >&2
+echo "Checking call graphs from $mode files..." >&2
 run_ward \
-	-- \
 	cc \
 	--mode=compiler \
 	--config=mono.config \
-	$graphs \
+	$inputs \
+	$preprocessor_flags \
 	$profile_flags
 
 # "$mono_path/mono/metadata/appdomain.c"

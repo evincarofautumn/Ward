@@ -328,33 +328,33 @@ inferPermissionsSCC :: [PermissionName]
            -> Tree.Tree Graph.Vertex
            -> IO ()
 inferPermissionsSCC implicitPermissions graphLookup graphVertex scc = do
-    -- We continue processing until the SCC's permission information reaches a
-    -- fixed point, i.e., we are no longer adding permission information.
-    growing <- newIORef True
-    fix $ \ loop -> do
-      writeIORef growing False
+  -- We continue processing until the SCC's permission information reaches a
+  -- fixed point, i.e., we are no longer adding permission information.
+  growing <- newIORef True
+  fix $ \ loop -> do
+    writeIORef growing False
 
-      -- For each function in the SCC:
-      for_ scc $ \ vertex -> do
-        let
-          (node, name, _incoming) = graphLookup vertex
-        -- For each permission action in function, plus implicit permissions not waived:
-        permissionActions <- readIORef $ nodePermissions node
-        let
-          implicitPermissionActions =
-            [ Need p
-            | p <- implicitPermissions
-            , not $ Waive p `HashSet.member` permissionActions
-            ]
-          nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
-        nodeGrowing <- propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
-        modifyIORef' growing (|| nodeGrowing)
+    -- For each function in the SCC:
+    for_ scc $ \ vertex -> do
+      let
+        (node, name, _incoming) = graphLookup vertex
+      -- For each permission action in function, plus implicit permissions not waived:
+      permissionActions <- readIORef $ nodePermissions node
+      let
+        implicitPermissionActions =
+          [ Need p
+          | p <- implicitPermissions
+          , not $ Waive p `HashSet.member` permissionActions
+          ]
+        nodePermissionActions = HashSet.toList permissionActions <> implicitPermissionActions
+      nodeGrowing <- propagatePermissionsNode graphLookup graphVertex (node, initialSite nodePermissionActions, name)
+      modifyIORef' growing (|| nodeGrowing)
 
-      -- We continue processing the current SCC if we're still propagating
-      -- permission information between functions.
-      do
-        shouldContinue <- readIORef growing
-        if shouldContinue then loop else pure ()
+    -- We continue processing the current SCC if we're still propagating
+    -- permission information between functions.
+    do
+      shouldContinue <- readIORef growing
+      if shouldContinue then loop else pure ()
 
 propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
                        -> (FunctionName -> Maybe Graph.Vertex)
@@ -388,17 +388,106 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             afterA <- IOVector.read callsA (IOVector.length callsA - 1)
             beforeB <- IOVector.read callsB 0
             afterB <- IOVector.read callsB (IOVector.length callsB - 1)
+
+            IOVector.write v i (beforeA <> beforeB)
+
+            let
+              relevantPermissions = map presencePermission $ HashSet.toList
+                $ mconcat [beforeA, beforeB, afterA, afterB]
+              changeA = HashSet.fromList
+                $ foldMap (derivePermissionActions (beforeA, afterA)) relevantPermissions
+              changeB = HashSet.fromList
+                $ foldMap (derivePermissionActions (beforeB, afterB)) relevantPermissions
+              findConflictWith current = go
+                where
+                  go x conflicts = case x of
+                    Grant p
+                      | not (Grant p `HashSet.member` current)
+                        || Revoke p `HashSet.member` current
+                        || Need p `HashSet.member` current
+                      -> conflicting
+                    Revoke p
+                      | not (Revoke p `HashSet.member` current)
+                        || Grant p `HashSet.member` current
+                      -> conflicting
+                    _ -> compatible
+                    where
+                      conflicting = x : conflicts
+                      compatible = conflicts
+
+              conflicts
+                = HashSet.fromList
+                  (foldr (findConflictWith changeA) [] $ HashSet.toList changeB)
+                <> HashSet.fromList
+                  (foldr (findConflictWith changeB) [] $ HashSet.toList changeA)
+
+            if HashSet.null conflicts
+              then IOVector.write v (succ i) afterA
+              else do
+                callsA' <- Vector.freeze callsA
+                callsB' <- Vector.freeze callsB
+                liftIO $ putStrLn $ strConcat
+                  [ "found conflicting information in "
+                  , show name
+                  , ": "
+                  , show $ HashSet.toList conflicts
+                  , " between "
+                  , show $ HashSet.toList changeA
+                  , " after "
+                  , show callsA'
+                  , " and "
+                  , show $ HashSet.toList changeB
+                  , " after "
+                  , show callsB'
+                  ]
+                IOVector.write v (succ i)
+                  $ HashSet.map (Conflicts . permissionActionName) conflicts
+
+{-
             -- If the permissions aren't the same after the branches of a
-            -- conditional, we record a conflict for each permission that was
-            -- present in one but not the other.
+            -- conditional, we record a conflict for each permission action that
+            -- was present in one but not the other.
             let
               gatherConflicts x y
-                = HashSet.map (Conflicts . presencePermission)
+                = HashSet.map (Conflicts . permissionActionName)
                 $ (x `HashSet.difference` y) <> (y `HashSet.difference` x)
-            IOVector.write v i (beforeA <> beforeB)
-            if afterA == afterB
+            let
+              relevantPermissions = map presencePermission
+                [ snd p
+                | action <- HashSet.toList
+                  $ mconcat [beforeA, beforeB, afterA, afterB]
+                , Just p <- pure $ case action of
+                  Grant p -> Just (True, p)
+                  Revoke p -> Just (False, p)
+                  _ -> Nothing
+                ]
+              changeA = HashSet.fromList
+                $ foldMap (derivePermissionActions (beforeA, afterA)) relevantPermissions
+              changeB = HashSet.fromList
+                $ foldMap (derivePermissionActions (beforeB, afterB)) relevantPermissions
+
+            if changeA == changeB
               then IOVector.write v (succ i) afterA
-              else IOVector.write v (succ i) $ gatherConflicts afterA afterB
+              else do
+                let conflicts = gatherConflicts changeA changeB
+                callsA' <- Vector.freeze callsA
+                callsB' <- Vector.freeze callsB
+                liftIO $ putStrLn $ strConcat
+                  [ "found conflicting information in "
+                  , show name
+                  , ": "
+                  , show conflicts
+                  , " between "
+                  , show changeA
+                  , " after "
+                  , show callsA'
+                  , " and "
+                  , show changeB
+                  , " after "
+                  , show callsB'
+                  ]
+                IOVector.write v (succ i) conflicts
+-}
 
           processCallTree s@(Sequence a b) i v = do
             processCallTree a i v
@@ -434,7 +523,7 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             -- last call) contains relevant permissions from the body of the
             -- function.
             IOVector.write v (succ i)
-              . HashSet.filter (not . conflicting)
+              . HashSet.filter (not . conflictingOrUses)
               =<< IOVector.read v i
 
             -- Update permission presence (has/lacks/conflicts) according to
@@ -457,22 +546,31 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                 Need p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    then do
+                      v' <- Vector.freeze v
+                      liftIO $ putStrLn $ strConcat ["found conflict in ", show name, " between need(", show p, ") and lacks(", show p, "); current state: ", show v']
+                      IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v (<> site (Has p)) i
 
                 Use p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    then do
+                      v' <- Vector.freeze v
+                      liftIO $ putStrLn $ strConcat ["found conflict in ", show name, " between use(", show p, ") and lacks(", show p, "); current state: ", show v']
+                      IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v (<> HashSet.fromList [Has p, Uses p]) i
 
                 Deny p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v
-                      ((<> site (Conflicts p))
-                        . HashSet.delete (Has p)
-                        . HashSet.delete (Uses p)) i
+                    then do
+                      v' <- Vector.freeze v
+                      liftIO $ putStrLn $ strConcat ["found conflict in ", show name, " between deny(", show p, ") and has(", show p, "); current state: ", show v']
+                      IOVector.modify v
+                        ((<> site (Conflicts p))
+                          . HashSet.delete (Has p)
+                          . HashSet.delete (Uses p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
 
                 -- If a call grants (resp. revokes) a permission, its call site
@@ -485,17 +583,23 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                 Grant p -> do
                   current <- IOVector.read v i
                   if Has p `HashSet.member` current
-                    then IOVector.modify v
-                      ((<> site (Conflicts p))
-                        . HashSet.delete (Has p)
-                        . HashSet.delete (Uses p)) i
+                    then do
+                      v' <- Vector.freeze v
+                      liftIO $ putStrLn $ strConcat ["found conflict in ", show name, " between grant(", show p, ") and has(", show p, "); current state: ", show v']
+                      IOVector.modify v
+                        ((<> site (Conflicts p))
+                          . HashSet.delete (Has p)
+                          . HashSet.delete (Uses p)) i
                     else IOVector.modify v ((<> site (Lacks p))) i
                   IOVector.modify v ((<> site (Has p)) . HashSet.delete (Lacks p)) $ succ i
 
                 Revoke p -> do
                   current <- IOVector.read v i
                   if Lacks p `HashSet.member` current
-                    then IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
+                    then do
+                      v' <- Vector.freeze v
+                      liftIO $ putStrLn $ strConcat ["found conflict in ", show name, " between revoke(", show p, ") and lacks(", show p, "); current state: ", show v']
+                      IOVector.modify v ((<> site (Conflicts p)) . HashSet.delete (Lacks p)) i
                     else IOVector.modify v ((<> site (Has p))) i
                   IOVector.modify v
                     ((<> site (Lacks p))
@@ -516,8 +620,10 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
 
         initial <- IOVector.read sites 0
         final <- IOVector.read sites (IOVector.length sites - 1)
-        permissionsFromCallSites (nodePermissions node) (initial, final)
-
+        result <- permissionsFromCallSites (nodePermissions node) (initial, final)
+        perms <- readIORef (nodePermissions node)
+        liftIO $ putStrLn $ strConcat ["inferred permissions ", show perms, " for function ", show name]
+        pure result
 
 -- After processing a call tree, we can infer its permission actions
 -- based on the permissions in the first and last call sites.
@@ -830,3 +936,8 @@ strConcat = concat
 conflicting :: PermissionPresence -> Bool
 conflicting Conflicts{} = True
 conflicting _ = False
+
+conflictingOrUses :: PermissionPresence -> Bool
+conflictingOrUses Conflicts{} = True
+conflictingOrUses Uses{} = True
+conflictingOrUses _ = False
