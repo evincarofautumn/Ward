@@ -102,6 +102,11 @@ encodePositionSpan pstart pl
       in form "span" False $ mconcat $ intersperse space body
 
 -- N.B. Assumes Pos.isSourcePos would return True
+--
+-- TODO: Since language-c 0.7 we can now also get the include stack via
+-- 'Pos.posParent' which may be useful for error messages for static inline
+-- functions.  For now we don't both emiting it (or consuming it in
+-- "ParseCallMap").
 encodeSourcePos :: Pos.Position -> B.Builder
 encodeSourcePos p =
   let
