@@ -15,7 +15,8 @@ import Data.These
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
-import Language.C.Data.Node (NodeInfo)
+import Language.C.Data.Node (NodeInfo, posOfNode)
+import Language.C.Data.Position (Position, position, posFile, posRow, posColumn, posOffset)
 import Language.C.System.GCC (newGCC)
 import Test.HUnit hiding (errors)
 import Test.Hspec
@@ -293,4 +294,14 @@ callMapRoundtripTest args =
     txt = Data.Text.Lazy.Encoding.decodeUtf8With Data.Text.Encoding.Error.lenientDecode bs
     parseResult = ParseCallMap.fromSource (show (Args.translationUnitPaths args)) txt
   in
-    parseResult `shouldBe` (Right callMap)
+    parseResult `shouldBeUptoPos` Right callMap
+
+  where
+    shouldBeUptoPos x y = fmap simplifiedPosInfo x `shouldBe` fmap simplifiedPosInfo y
+
+    -- the full NodeInfo has things we don't care to preserve (node names), and
+    -- additionally Position includes the full include stack which we don't
+    -- preserve in the graph dump.
+    simplifiedPosInfo :: Functor f => f (NodeInfo, b, c) -> f (Position, b, c)
+    simplifiedPosInfo = fmap $ \(ni, b, c) -> (simplifyPos (posOfNode ni), b, c)
+    simplifyPos p = position (posOffset p) (posFile p) (posRow p) (posColumn p) Nothing

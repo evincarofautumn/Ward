@@ -211,7 +211,7 @@ sourceForm =
     intlit = extractSpan <$> intLiteral
   in theForm "source" sourceBody
   where
-    mkPos path offset row column = CPos.position offset path row column
+    mkPos path offset row column = CPos.position offset path row column Nothing
 
 ------------------------------------------------------------
 -- Parsing S-expression files
