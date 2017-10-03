@@ -1,6 +1,8 @@
 #!/bin/bash
 
-mono_path="$HOME/Projects/mono"
+# set mono_path to WARD_MONO_PATH if it is set
+mono_path=${WARD_MONO_PATH:-"$HOME/Projects/mono"}
+
 preprocessor_flags="\
 	-P -I$mono_path \
 	-P -I$mono_path/eglib/src \
