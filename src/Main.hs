@@ -13,7 +13,7 @@ import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
 import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
-import System.Exit (exitFailure)
+import System.Exit (exitFailure, ExitCode(..), exitWith)
 import System.IO (hPutStrLn, stderr, stdout)
 import Types
 import qualified Args
@@ -45,19 +45,23 @@ main = do
         exitFailure
   logProgress args "Preprocessing and parsing..."
   parseResults <- traverse (parseInput args) (Args.translationUnitPaths args)
-  case sequence parseResults of
+  exitResult <- case sequence parseResults of
     Right translationUnits ->
       case Args.outputAction args of
         AnalysisAction outputMode -> analyze args outputMode config translationUnits
-        GraphAction -> dumpCallGraph args config translationUnits
+        GraphAction -> do
+          dumpCallGraph args config translationUnits
+          return ExitSuccess
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError
+      return (ExitFailure 1)
+  exitWith exitResult
 
-analyze :: Args.Args -> OutputMode -> Config -> [ProcessingUnit] -> IO ()
+analyze :: Args.Args -> OutputMode -> Config -> [ProcessingUnit] -> IO ExitCode
 analyze args outputMode config translationUnits = do
   logProgress args "Checking..."
-  do
-    putStr $ formatHeader outputMode
+  withOutputFn (Args.outputFilePath args) $ \output -> do
+    output $ formatHeader outputMode
     do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
@@ -86,7 +90,7 @@ analyze args outputMode config translationUnits = do
             Just entry
               | entry `elem` seen -> loop warnings errors seen
               | otherwise -> do
-              putStrLn $ format outputMode entry
+              output $ format outputMode entry
               let seen' = entry : seen
               case entry of
                 Note{} -> loop warnings errors seen'
@@ -95,10 +99,20 @@ analyze args outputMode config translationUnits = do
 
       (warnings, errors) <- loop (0 :: Int) (0 :: Int) []
 
-      putStr $ formatFooter outputMode $ concat
+      output $ formatFooter outputMode $ concat
         [ "Warnings: ", show warnings
         , ", Errors: ", show errors
         ]
+      let
+        exitResult =
+          if errors == 0 then ExitSuccess else ExitFailure 1
+      return exitResult
+  where
+    withOutputFn :: Maybe FilePath -> ((String -> IO ()) -> IO r) -> IO r
+    withOutputFn Nothing k = k putStr
+    withOutputFn (Just outputFilePath) k =
+      IO.withFile outputFilePath IO.WriteMode (k . IO.hPutStr)
+
 
 logProgress :: Args.Args -> String -> IO ()
 logProgress args s = case Args.outputAction args of
