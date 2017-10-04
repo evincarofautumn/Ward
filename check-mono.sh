@@ -13,10 +13,16 @@ preprocessor_flags="\
 	-P -I$mono_path/mono/eglib \
 	-P -I$mono_path/mono/eglib/src \
 	-P -I/usr/local/opt/openssl/include \
-	-P -DHAVE_SGEN_GC \
+	-P -DHAVE_SGEN_GC"
+
+# Options that confuse gcc/glibc
+if [ `uname -s` == "Darwin" ]; then
+    preprocessor_flags="${preprocessor_flags} \
 	-P -DSUPPRESSION_DIR= \
 	-P -fno-blocks \
 	-P -D_XOPEN_SOURCE"
+fi
+
 
 # profile_flags="+RTS -p -hr -RTS"
 profile_flags="+RTS -M5500m -RTS"
@@ -61,18 +67,20 @@ function run_ward() {
 # Emit a graph file for each translation unit
 echo "Generating call graphs..." >&2
 for translation_unit in $translation_units; do
-	translation_unit_modified="$(mtime $translation_unit)"
-	if [ -f $translation_unit.graph ]; then
-		graph_modified="$(mtime $translation_unit.graph)"
+	if [ -f "${translation_unit}.graph" ]; then
+		if [ "${translation_unit}" -nt "${translation_unit}.graph" ]; then
+	    		rebuild_graph=1
+		else
+			rebuild_graph=0
+		fi
 	else
-		graph_modified=0
+		rebuild_graph=1
 	fi
-	if [ "$translation_unit_modified" -lt "$graph_modified" ]; then
+	if [ ${rebuild_graph} -eq 0 ]; then
 		echo "Call graph for $translation_unit is up to date" >&2
 	else
 		echo "Generating call graph for $translation_unit..." >&2
 		time run_ward \
-			-- \
 			cc \
 			--mode=graph \
 			--config=mono.config \
@@ -92,7 +100,6 @@ done
 # Check all graph files together
 echo "Checking call graphs..." >&2
 run_ward \
-	-- \
 	cc \
 	--mode=compiler \
 	--config=mono.config \
