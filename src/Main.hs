@@ -56,8 +56,8 @@ main = do
 analyze :: Args.Args -> OutputMode -> Config -> [ProcessingUnit] -> IO ()
 analyze args outputMode config translationUnits = do
   logProgress args "Checking..."
-  do
-    putStr $ formatHeader outputMode
+  withOutputFn (Args.outputFilePath args) $ \output -> do
+    output $ formatHeader outputMode
     do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
@@ -86,7 +86,7 @@ analyze args outputMode config translationUnits = do
             Just entry
               | entry `elem` seen -> loop warnings errors seen
               | otherwise -> do
-              putStrLn $ format outputMode entry
+              output $ format outputMode entry
               let seen' = entry : seen
               case entry of
                 Note{} -> loop warnings errors seen'
@@ -95,10 +95,16 @@ analyze args outputMode config translationUnits = do
 
       (warnings, errors) <- loop (0 :: Int) (0 :: Int) []
 
-      putStr $ formatFooter outputMode $ concat
+      output $ formatFooter outputMode $ concat
         [ "Warnings: ", show warnings
         , ", Errors: ", show errors
         ]
+  where
+    withOutputFn :: Maybe FilePath -> ((String -> IO ()) -> IO r) -> IO r
+    withOutputFn Nothing k = k putStr
+    withOutputFn (Just outputFilePath) k =
+      IO.withFile outputFilePath IO.WriteMode (k . IO.hPutStr)
+
 
 logProgress :: Args.Args -> String -> IO ()
 logProgress args s = case Args.outputAction args of
