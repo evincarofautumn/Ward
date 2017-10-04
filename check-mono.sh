@@ -8,10 +8,16 @@ preprocessor_flags="\
 	-P -I$mono_path/mono/eglib \
 	-P -I$mono_path/mono/eglib/src \
 	-P -I/usr/local/opt/openssl/include \
-	-P -DHAVE_SGEN_GC \
+	-P -DHAVE_SGEN_GC"
+
+# Options that confuse gcc/glibc
+if [ `uname -s` == "Darwin" ]; then
+    preprocessor_flags="${preprocessor_flags} \
 	-P -DSUPPRESSION_DIR= \
 	-P -fno-blocks \
 	-P -D_XOPEN_SOURCE"
+fi
+
 
 # profile_flags="+RTS -p -hr -RTS"
 profile_flags=""
