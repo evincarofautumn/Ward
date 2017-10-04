@@ -99,10 +99,12 @@ done
 
 # Check all graph files together
 echo "Checking call graphs..." >&2
+mkdir -p mono-report
 run_ward \
 	cc \
-	--mode=compiler \
+	--mode=html \
 	--config=mono.config \
+	--output=mono-report/index.html \
 	$graphs \
 	$profile_flags
 
