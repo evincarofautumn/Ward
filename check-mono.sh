@@ -19,7 +19,8 @@ preprocessor_flags="\
 	-P -D_XOPEN_SOURCE"
 
 # profile_flags="+RTS -p -hr -RTS"
-profile_flags=""
+profile_flags="+RTS -M5500m -RTS"
+
 
 translation_units="\
 	$mono_path/mono/sgen/sgen-alloc.c \
