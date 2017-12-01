@@ -1,0 +1,168 @@
+ward <preprocessor> (<source file> | <flag>)+ -- <preprocessor flags>
+  <flag> = ("+" | "-") <permission>
+e.g.:
+  ward gcc foo.c +io +alloc +amd64 -- -I /usr/local/include
+
+parse translation unit
+for each external declaration in translation unit:
+  if declaration or asm, ignore
+  if function definition:
+    add type to typing environment
+    add function to list of functions to verify
+for each function to verify:
+  infer permissions from statements
+  check inferred permissions against declared permissions
+
+CFunDef [CDeclarationSpecifier a] (CDeclarator a) [CDeclaration a] (CStatement a) a
+        ^ declaration specifiers  ^ return type   ^ parameters     ^ body
+
+The CDeclarationSpecifiers we care about for functions & parameters are:
+  (CTypeQual (CAttrQual (CAttr "permission" exprs)))
+
+Where "exprs" is a list of expressions of the form:
+  permission_expr ::= permit
+                    | ("grant" | "revoke") "(" permit ")"
+  permit ::= ("+" | "-") (identifier | int_const)
+
+  CUnary (CPlusOp | CMinusOp) (CVar identifier | CConst (CIntConst number _))
+  | CCall (CVar ("grant" | "revoke")) ...
+
+(Bikeshed: could also use e.g. signal_safe and !signal_safe, which may be
+clearer to C programmers, but is less symmetrical.)
+
+E.g.:
+  #define PERMIT(...) __attribute__ ((permission (__VA_ARG__)))
+  int printf (char *s, ...) PERMIT (+io);
+
+  /* The signal handler function must be signal-safe. */
+  sig_t signal (int sig, sig_t func PERMIT (+signal_safe));
+
+  /* Calls f(x), so needs whatever permission f needs. */
+  void call (void (*f) (int) PERMIT (+1), int x) PERMIT (+1);
+
+Permissions are declared implicitly when used.
+
+Some permissions are implicitly granted or revoked:
+  +io/io - this is C, so I/O is allowed by default
+  +fail/fail - assertions/abort are allowed by default
+  -signal_safe/!signal_safe - functions are signal-unsafe by default
+  +malloc - allowed to allocate with [g_]malloc
+
+(Speaking of glib functions, we can freely annotate all this stuff in eglib!)
+
+You can specify the set of implicit permissions as flags to Ward.
+
+Ideas for permissions:
+  +gc_lock - must only be called with the GC lock held
+  -gc_lock - must not be called with the GC lock held
+  (ditto +loader_lock, +assemblies_lock, +debug_lock, &c.)
+  +amd64, +arm, ... - must only be called on amd64 &c.
+  +stw - requires the world to be stopped
+  -malloc - not allowed to allocate
+  +tls - allowed to access TLS variables
+
+Positive and negative permissions are distinct, but mutually exclusive: a
+function cannot be both +gc_lock (requires GC lock held) and -gc_lock
+(requires GC lock not held). This might be too complicated, so we could scrap
+negative permissions for now.
+
+Some magical functions are blessed with permission coercions:
+
+    /* Changes the permission context from -gc_lock to +gc_lock: before this
+       call, functions requiring the lock cannot be called, and functions
+       requiring the lock not to be held can (maybe) be called; afterward,
+       functions requiring the lock can be called, and functions requiring the
+       lock not to be held can (definitely) not be called.
+
+       I say (maybe) because it depends on the polymorphic permissions provided
+       by the caller. */
+    void sgen_gc_lock (void) PERMIT (revoke (-gc_lock), grant (+gc_lock));
+    void sgen_gc_unlock (void) PERMIT (revoke (+gc_lock), grant (-gc_lock));
+
+It's always possible to grant a permission you already have, or revoke a
+permission you don't have.
+
+Permission variables
+
+to infer permission from statement:
+  label - no change
+  case - no change
+  cases - no change
+  default - no change
+  expr - ...
+  compound - each
+  if - union both branches
+  switch - union all branches
+  while - just treat like block and hope for the best?
+  for - ditto
+  goto - uh oh; some conservative approximation?
+  gotoptr - really uh oh
+  continue - goto
+  break - goto
+  return - goto
+  asm - no change?
+
+to infer permission from expression:
+
+--------------------------------------------------------------------------------
+
+interactively patching program:
+
+When a permission is missing (need(x), x ∉ C), in interactive mode, ask if the
+user wants to add it (y/n). If no, simply proceed. If yes:
+
+ * The function is re-checked with that permission granted.
+ * Any functions that reference it have their results invalidated.
+
+    * This probably means that before we begin checking permissions, we need to
+      build a call graph and partition it into SCCs, which are then checked in
+      topologically sorted order. Ideally, code should mostly form a DAG, since
+      mutual recursion is fairly rare in typical C.
+
+    * When a function is updated, all functions in its SCC and any functions
+      that reference it from outside its SCC have their results invalidated;
+      they are re-added to a queue of functions to check.
+
+    * A patch is added to the patch list; all patches are applied after an
+      interactive session.
+
+      The question is how to produce a textual patch from an AST patch.
+
+      Maybe we can generate a pfff .spatch file!
+
+      Yup, we can get the filename from the NodeInfo of the function, then
+      output a pair of the filepath and .spatch file name, to be patched later
+      by shell script or whatever. The .spatch file contains something like this
+      for static functions:
+
+           MONO_PERMIT (
+          +  need (sgen_stop_world), 
+             ...
+           ) $T
+           major_collector_iterate_objects (...) {...}
+
+      Or this for non-static:
+
+           $T major_collector_iterate_objects (...)
+           MONO_PERMIT (
+          +  need (sgen_stop_world), 
+             ...
+           );
+
+      The "MONO_PERMIT" macro can be set on the command line or in a config
+      file, presumably.
+
+      What to do when a function has no permission attributes? Different
+      patches?
+
+          +MONO_PERMIT (
+             need (sgen_stop_world)
+           ) $T
+           major_collector_iterate_objects (...) {...}
+
+           $T major_collector_iterate_objects (...)
+          +MONO_PERMIT (need (sgen_stop_world))
+           ;
+
+      Maybe we can always generate both, because they're incompatible, so the
+      inapplicable one will just fail to apply.
