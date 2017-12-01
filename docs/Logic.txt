@@ -1,0 +1,38 @@
+need(A), deny(B), grant(C), revoke(D), waive(E)
+=
+A -> -B -> D -o (E+1) -> A /\ C
+
+need(P)
+deny(P)
+grant(P)
+revoke(P)
+waive(P)
+
+Implications
+
+  need(!A) = deny(A)
+  deny(!A) = need(A)
+  If A->B then need(A)->need(B), grant(B)->grant(A).
+  If A->B, implicit(A,B) then waive(B)->waive(A).
+  If A->!B then need(A)->deny(B), grant(B)->revoke(A).
+  If A->B&C then need(A)->need(B,C), grant(B,C)->grant(A).
+
+Not sure if `|` is actually desirable, and the rules are more complex:
+
+  If A->B|C, then need(A)->!deny(B,C) and grant(B)->grant(A) and grant(C)->grant(A).
+
+E.g., if lock_loader -> !domain_locked, then:
+
+  "In order to lock the loader, the domain lock must not be held."
+  need(lock_loader) -> deny(domain_locked)
+
+  "When locking the domain, revoke the ability to lock the loader."
+  grant(domain_locked) -> revoke(lock_loader)
+
+If malloc -> signal_unsafe, then:
+
+  "Calling malloc is signal-unsafe."
+  need(malloc) -> need(signal_unsafe)
+
+  "Waiving signal-unsafety also waives malloc privileges."
+  waive(signal_unsafe) -> waive(malloc)

@@ -1,0 +1,26 @@
+Δ - Permission action annotations.
+Γ - Permission context.
+
+Rules:
+
+check(context, function(args...) { body }) -> (new-context)
+
+  Γ ⊢ f(x̂){b} ⊣ Δ
+  Γ → Γ′ ⊢ f(x̂){b} ⊣ Δ
+
+Read: function f with parameters x̂ and body b checks against actions Δ in context Γ,
+producing new context Γ′ or the original Γ if Γ′ is omitted.
+
+
+   P ∈ Γ   Γ,P ⊢ b ⊣ Δ
+------------------------- [NEED]
+ Γ ⊢ f(x̂){b} ⊣ Δ,need(P)
+
+    P ∉ Γ   Γ ⊢ b ⊣ Δ
+------------------------- [DENY]
+ Γ ⊢ f(x̂){b} ⊣ Δ,deny(P)
+
+[GRANT]
+
+P ∉ Γ   Γ ⊢ b ⊣ Δ
+Γ → Γ,P ⊢ f(x̂){b} ⊣ Δ,grant(P)
