@@ -29,7 +29,7 @@ executable ward
                      , containers
                      , filepath
                      , hashable
-                     , language-c >= 0.7
+                     , language-c >= 0.7.1
                      , optparse-applicative
                      , parsec
                      , pretty
