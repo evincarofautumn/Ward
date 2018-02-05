@@ -25,7 +25,11 @@ fi
 
 
 # profile_flags="+RTS -p -hr -RTS"
-profile_flags="+RTS -M5500m -RTS"
+if [ z"$WARD_GHC_RTS_FLAGS" = z ]; then
+    profile_flags="+RTS -M5200m -RTS"
+else
+    profile_flags="$WARD_GHC_RTS_FLAGS"
+fi
 
 
 translation_units="\
