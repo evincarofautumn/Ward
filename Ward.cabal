@@ -27,6 +27,7 @@ executable ward
                      , array
                      , bytestring
                      , containers
+                     , deepseq
                      , filepath
                      , hashable
                      , language-c >= 0.7.1
@@ -58,6 +59,7 @@ test-suite test
                      , array
                      , bytestring
                      , containers
+                     , deepseq
                      , hashable
                      , hspec
                      , language-c

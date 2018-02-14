@@ -5,11 +5,13 @@ module Graph
   , pattern WardKeyword
   ) where
 
+import Control.DeepSeq (deepseq)
 import Control.Monad (mzero)
 import Control.Monad.Trans.List (ListT(ListT), runListT)
 import Data.Foldable (foldrM)
 import Data.Functor.Identity (runIdentity)
 import Data.Generics
+import Data.List (foldl')
 import Data.Monoid ((<>))
 import Language.C.Data.Ident (Ident(..))
 import qualified Language.C.Data.Ident
@@ -57,21 +59,27 @@ fromTranslationUnits config
   . nameMapFromTranslationUnit config
   . joinTranslationUnits
 
+-- | When forced, whnf each element of the given list.
+whnfList :: [a] -> ()
+whnfList = foldl' (\() x -> x `seq` ()) ()
+
 -- | Joins multiple translation units into one.
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
 joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _) =
   let
     f (path, CTranslUnit externalDeclarations _) =
-      prefixStatics path externalDeclarations
+      whnfList externalDeclarations `seq` prefixStatics path externalDeclarations
     tus' = concatMap f tus
   in
-    tus' `seq` CTranslUnit tus' firstLocation
+    -- Why can't we just deepseq tus'? Because language-c doesn't provide
+    -- NFData instances :-(
+    whnfList tus' `seq` CTranslUnit tus' firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
 -- | Prefixes static function names with the name of the translation unit where
 -- they were defined.
 prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
-prefixStatics path decls = statics `seq` map prefixOne decls
+prefixStatics path decls = statics `deepseq` map prefixOne decls
   where
     statics :: HashSet.HashSet String
     statics =
@@ -90,9 +98,9 @@ prefixStatics path decls = statics `seq` map prefixOne decls
       CFDefExt (CFunDef specifiers
         declr@(CDeclr (Just ident@(Ident name _ _)) derived lit attrs declrPos) parameters body defPos)
         | isStatic name
-        -> CFDefExt (CFunDef specifiers (CDeclr (Just ident') derived lit attrs declrPos) parameters body' defPos)
+        -> body' `seq` CFDefExt (CFunDef specifiers (CDeclr (Just ident') derived lit attrs declrPos) parameters body' defPos)
         | otherwise
-        -> CFDefExt (CFunDef specifiers declr parameters body' defPos)
+        -> body' `seq` CFDefExt (CFunDef specifiers declr parameters body' defPos)
         where
           ident' = patchIdent ident
           body' = everywhere (mkT patchStatement) body
@@ -190,10 +198,10 @@ nameMapFromTranslationUnit config
 
       -- For a function definition, record the function body in the context.
       CFDefExt definition@(CFunDef specifiers
-        (CDeclr (Just ident) _ _ _ _) _parameters _body pos) -> let
+        (CDeclr (Just ident) _ _ _ _) _parameters body pos) -> let
           specifierPermissions = extractPermissionActions
             [attr | CTypeQual (CAttrQual attr) <- specifiers]
-          in Map.singleton ident (pos, Just definition, specifierPermissions)
+          in body `seq` Map.singleton ident (pos, Just definition, specifierPermissions)
 
       _ -> mempty
 
