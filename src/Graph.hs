@@ -59,19 +59,19 @@ fromTranslationUnits config
 
 -- | Joins multiple translation units into one.
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
-joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _)
-  = CTranslUnit
-    (concat
-      [ prefixStatics path externalDeclarations
-      | (path, CTranslUnit externalDeclarations _) <- tus
-      ])
-    firstLocation
+joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _) =
+  let
+    f (path, CTranslUnit externalDeclarations _) =
+      prefixStatics path externalDeclarations
+    tus' = concatMap f tus
+  in
+    tus' `seq` CTranslUnit tus' firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
 -- | Prefixes static function names with the name of the translation unit where
 -- they were defined.
 prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
-prefixStatics path decls = map prefixOne decls
+prefixStatics path decls = statics `seq` map prefixOne decls
   where
     statics :: HashSet.HashSet String
     statics =
@@ -202,11 +202,11 @@ nameMapFromTranslationUnit config
 -- | Converts a 'NameMap' into a 'CallMap' by converting function bodies into
 -- 'CallTree's.
 callMapFromNameMap :: NameMap -> CallMap
-callMapFromNameMap = Map.fromList . map fromEntry . Map.toList
+callMapFromNameMap = Map.mapWithKey fromEntry
   where
-    fromEntry (name, (pos, mDef, permissions)) = let
+    fromEntry name (pos, mDef, permissions) = let
       calls = maybe Nop fromFunction mDef
-      in (name, (pos, simplifyCallTree calls, permissions))
+      in (pos, simplifyCallTree calls, permissions)
 
     fromFunction :: CFunDef -> CallTree Ident
     fromFunction (CFunDef specifiers
