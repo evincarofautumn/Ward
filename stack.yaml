@@ -1,7 +1,6 @@
-resolver: nightly-2017-03-15
+resolver: lts-11.7
 packages:
 - '.'
-extra-deps:
-- language-c-0.7.1
+extra-deps: []
 flags: {}
 extra-package-dbs: []
