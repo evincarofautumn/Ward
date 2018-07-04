@@ -40,7 +40,16 @@ fromProcessingUnits :: Config -> [(FilePath, ProcessingUnit)] -> CallMap
 fromProcessingUnits config units =
   let (cs, gs) = partitionProcessingUnits units
       g0 :: CallMap
-      g0 = foldMap snd gs
+      g0 = Map.unionsWith mergeCallMapItems $ map snd gs
+      mergeCallMapItems (n1, c1, p1) (n2, c2, p2) =
+          (n1, c, p1 <> p2)
+        where c | notNop c1 && notNop c2 =
+                  if c1 /= c2
+                  then error $ "Multiple definitions of "++show n1
+                  else c1
+                | otherwise = simplifyCallTree (Sequence c1 c2)
+              notNop Nop = False
+              notNop _ = True
       g' = if null cs then mempty else fromTranslationUnits config cs
   in g0 <> g'
 
