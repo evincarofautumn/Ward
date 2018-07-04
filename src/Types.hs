@@ -332,9 +332,9 @@ data OutputAction
 format :: OutputMode -> Entry -> String
 
 format CompilerOutput entry = case entry of
-  Note p t -> concat [posPrefix p, ": note: ", Text.unpack t]
-  Warning p t -> concat [posPrefix p, ": warning: ", Text.unpack t]
-  Error p t -> concat [posPrefix p, ": error: ", Text.unpack t]
+  Note p t -> concat [posPrefix p, ": note: ", Text.unpack t, "\n"]
+  Warning p t -> concat [posPrefix p, ": warning: ", Text.unpack t, "\n"]
+  Error p t -> concat [posPrefix p, ": error: ", Text.unpack t, "\n"]
 
 -- TODO: Convert position to URL for hyperlinked output.
 format HtmlOutput entry = case entry of
