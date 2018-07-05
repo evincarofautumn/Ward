@@ -171,6 +171,10 @@ In this way, Ward is pay-as-you-go: you only need to annotate and verify the spe
 
 ## Known Deficiencies
 
+### Poor Performance
+
+On a project of nontrivial size (dozens of kloc), Ward consumes a large amount of memory and operates slowly due to retaining a large amount of `language-c` AST information. The preferred method for checking a large project is to build a *call map* for each translation unit *separately* using `--mode=graph`, and then load & check all the call maps together. You can see an example of this in [`check-mono.sh`](https://github.com/evincarofautumn/Ward/blob/master/check-mono.sh).
+
 ### No Indirect Calls
 
 Ward currently does not handle indirect calls. In practice this is not a significant limitation, as the vast majority of calls in typical C code are direct, but it may be addressed in the future.
