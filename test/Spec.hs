@@ -4,7 +4,6 @@ module Main
   ( main
   ) where
 
-import Args (Args(Args))
 import Check.Permissions (Function(..))
 import Control.Concurrent.Chan (getChanContents, newChan)
 import Data.Foldable (traverse_)
@@ -21,15 +20,14 @@ import Language.C.System.GCC (newGCC)
 import Test.HUnit hiding (errors)
 import Test.Hspec
 import Text.Parsec (ParseError)
-import Types
-import qualified Args
 import qualified Check.Permissions as Permissions
-import qualified Config
-import qualified Data.ByteString.Builder
 import qualified Data.Map as Map
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy.Encoding
-import qualified Data.Text.Encoding.Error
+
+import Types
+import Args (Args(Args))
+import qualified Args
+import qualified Config
 import qualified DumpCallMap
 import qualified Graph
 import qualified ParseCallMap
@@ -290,9 +288,8 @@ callMapRoundtripTest :: Args -> IO ()
 callMapRoundtripTest args =
   wardTestWithCallmaps args $ \ _config callMap ->
   let
-    bs = Data.ByteString.Builder.toLazyByteString (DumpCallMap.encodeCallMap callMap)
-    txt = Data.Text.Lazy.Encoding.decodeUtf8With Data.Text.Encoding.Error.lenientDecode bs
-    parseResult = ParseCallMap.fromSource (show (Args.translationUnitPaths args)) txt
+    bs = DumpCallMap.encodeCallMap callMap
+    parseResult = ParseCallMap.fromSource bs
   in
     fmap getCallMap parseResult `shouldBeUptoPos` Right (getCallMap callMap)
 

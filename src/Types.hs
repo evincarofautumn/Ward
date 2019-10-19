@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -10,6 +11,7 @@ module Types where
 
 import Control.Concurrent.Chan (Chan, writeChan)
 import Control.Monad.IO.Class (MonadIO(..))
+import qualified Data.Aeson as A
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
 import Data.Map (Map)
@@ -26,7 +28,8 @@ import Language.C.Syntax.AST -- *
 import qualified Language.C.Parser as CParser
 import qualified Data.Map as Map
 import qualified Data.Text as Text
-import qualified Text.Parsec.Error as ParsecErr
+
+import Orphans ()
 
 --------------------------------------------------------------------------------
 -- Permissions
@@ -36,6 +39,7 @@ import qualified Text.Parsec.Error as ParsecErr
 -- allowed to perform.
 newtype PermissionName = PermissionName Text
   deriving (Eq, Hashable, IsString, Ord)
+  deriving newtype (A.FromJSON, A.ToJSON)
 
 instance Show PermissionName where
   show (PermissionName name) = Text.unpack name
@@ -74,6 +78,8 @@ data PermissionAction
   | Waive !PermissionName
   deriving (Eq, Generic, Ord)
 
+instance A.ToJSON PermissionAction
+instance A.FromJSON PermissionAction
 
 instance Show PermissionAction where
   show = \ case
@@ -158,7 +164,10 @@ type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 -- function instead of the whole definition.
 --
 newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallTree Ident, PermissionActionSet) }
-  deriving (Show, Semigroup, Monoid)
+  deriving (Show, Semigroup, Monoid, Generic)
+
+instance A.FromJSON CallMap
+instance A.ToJSON CallMap
 
 -- | A 'CallTree' describes the calls that a function makes in its definition. A
 -- 'Call' leaf node refers to a call site; a 'Nop' leaf refers to a statement
@@ -192,7 +201,10 @@ data CallTree a
   | Choice !(CallTree a) !(CallTree a)
   | Call !a
   | Nop
-  deriving (Eq, Foldable, Functor, Traversable)
+  deriving (Eq, Foldable, Functor, Traversable, Generic)
+
+instance A.ToJSON ident => A.ToJSON (CallTree ident)
+instance A.FromJSON ident => A.FromJSON (CallTree ident)
 
 simplifyCallTree :: CallTree a -> CallTree a
 simplifyCallTree (Sequence a b) = case (simplifyCallTree a, simplifyCallTree b) of
@@ -240,12 +252,12 @@ data ProcessingUnit =
   | CallMapProcessingUnit !CallMap
 
 -- | An error that may occur while parsing a callmap graph file.
-type CallMapParseError = ParsecErr.ParseError
+type CallMapParseError = String
 
 -- | An error parsing one of the processing units.  Either a C parse error or a CallMapParseError
 data ProcessingUnitParseError =
   CSourceUnitParseError CParser.ParseError
-  | CallMapUnitParseError !CallMapParseError
+  | CallMapUnitParseError CallMapParseError
   deriving (Show)
 
 --------------------------------------------------------------------------------

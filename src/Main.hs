@@ -157,7 +157,7 @@ parseCInput args path =
       preprocessor = newGCC $ Args.preprocessorPath args
   in parseCFile preprocessor temporaryDirectory (Args.preprocessorFlags args) path
 
-parseGraphInput :: Args.Args -> FilePath -> IO (Either CallMapParseError CallMap)
+parseGraphInput :: Args.Args -> FilePath -> IO (Either String CallMap)
 parseGraphInput _args path =
   ParseCallMap.fromFile path
 
