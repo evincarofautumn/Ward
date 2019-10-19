@@ -126,14 +126,8 @@ dumpCallGraph args config translationUnits = do
         (zip (Args.translationUnitPaths args) translationUnits)
   case Args.outputFilePath args of
     Nothing -> DumpCallMap.hPutCallMap stdout callMap
-    Just path -> do
-      handle <- IO.openFile path IO.WriteMode
-      -- Binary mode and block buffering (here using the default block size) are
-      -- recommended in the ByteString documentation for hPutBuilder.
-      IO.hSetBinaryMode handle True
-      IO.hSetBuffering handle $ IO.BlockBuffering Nothing
-      DumpCallMap.hPutCallMap handle callMap
-      IO.hClose handle
+    Just path -> IO.withFile path IO.WriteMode $ \hdl ->
+      DumpCallMap.hPutCallMap hdl callMap
 
 parseInput :: Args.Args -> FilePath -> IO (Either ProcessingUnitParseError ProcessingUnit)
 parseInput args path =

@@ -5,7 +5,7 @@ import Types (CallMap(..))
 import Control.Monad.IO.Class (MonadIO(..))
 
 import qualified Data.ByteString.Lazy as B
-import System.IO (Handle, hFlush)
+import System.IO (Handle)
 import qualified Data.Aeson as Aeson
 
 -- | Encode the given callmap as a 'B.ByteString'
@@ -16,7 +16,6 @@ encodeCallMap = Aeson.encode
 -- The representation preserves all the source attributes of the underlying C file.
 -- Identifiers are stored in UTF-8.
 hPutCallMap :: MonadIO m => Handle -> CallMap -> m ()
-hPutCallMap handle callMap = liftIO $ do
-  B.hPut handle $ encodeCallMap callMap
-  hFlush handle
+hPutCallMap handle callMap =
+    liftIO $ B.hPut handle $ encodeCallMap callMap
 
