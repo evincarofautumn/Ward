@@ -110,7 +110,7 @@ prefixStatics path decls = statics `deepseq` map prefixOne decls
         -> body' `seq` CFDefExt (CFunDef specifiers declr parameters body' defPos)
         where
           ident' = patchIdent ident
-          body' = everywhere (mkT patchStatement) body
+          body' = patchStatement body
       CDeclExt (CDecl specifiers declarators declPos)
         -> CDeclExt (CDecl specifiers (map patchDeclarator declarators) declPos)
       _ -> decl
