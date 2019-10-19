@@ -39,7 +39,7 @@ fromProcessingUnits config units =
   let (cs, gs) = partitionProcessingUnits units
       g0 :: CallMap
       g0 = CallMap $ Map.unionsWith mergeCallMapItems $ map (getCallMap . snd) gs
-      mergeCallMapItems (n1, c1, p1) (n2, c2, p2) =
+      mergeCallMapItems (n1, c1, p1) (_n2, c2, p2) =
           (n1, c, p1 <> p2)
         where c | notNop c1 && notNop c2 =
                   if c1 /= c2
@@ -169,7 +169,7 @@ hasStaticSpecifiers specifiers =
 
 nameMapFromTranslationUnit
   :: Config -> CTranslUnit -> NameMap
-nameMapFromTranslationUnit config
+nameMapFromTranslationUnit _config
   (CTranslUnit externalDeclarations _)
   = foldl' combine mempty $ map fromDecl externalDeclarations
   where
@@ -219,18 +219,18 @@ nameMapFromTranslationUnit config
 callMapFromNameMap :: NameMap -> CallMap
 callMapFromNameMap = CallMap . Map.mapWithKey fromEntry
   where
-    fromEntry name (pos, mDef, permissions) = let
+    fromEntry _name (pos, mDef, permissions) = let
       calls = maybe Nop fromFunction mDef
       in (pos, simplifyCallTree calls, permissions)
 
     fromFunction :: CFunDef -> CallTree Ident
-    fromFunction (CFunDef specifiers
-      (CDeclr (Just ident@(Ident name _ pos)) _ _ _ _)
+    fromFunction (CFunDef _specifiers
+      (CDeclr (Just (Ident _name _ _pos)) _ _ _ _)
       parameters body _)
       = fromStatement body
       where
         -- TODO: Do something with parameter names?
-        parameterNames =
+        _parameterNames =
           [ Just parameterName
           | CDecl _ parameterDeclarations _ <- parameters
           , (Just (CDeclr (Just (Ident parameterName _ _)) _ _ _ _), _, _)
@@ -283,7 +283,7 @@ callMapFromNameMap = CallMap . Map.mapWithKey fromEntry
         -> Nop
       CBreak _pos
         -> Nop
-      CReturn mExpr a
+      CReturn mExpr _
         -> maybe Nop fromExpression mExpr
 
       -- TODO: Handle effects for assembly statements?
@@ -342,7 +342,7 @@ callMapFromNameMap = CallMap . Map.mapWithKey fromEntry
       CCompoundLit _decl initList _pos
         -> fromInitList initList
       -- TODO: This should probably be a choice of the possible cases.
-      CGenericSelection expr _cases _pos
+      CGenericSelection _expr _cases _pos
         -> Nop
       CStatExpr stat _pos
         -> fromStatement stat
@@ -382,9 +382,9 @@ callMapFromNameMap = CallMap . Map.mapWithKey fromEntry
 extractPermissionActions :: [CAttr] -> PermissionActionSet
 extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runListT $ do
   CAttr WardKeyword expressions _ <- select attributes
-  CCall (CVar (Ident actionName _ _) _) permissions pos <- select expressions
+  CCall (CVar (Ident actionName _ _) _) permissions _pos <- select expressions
   permissionSpec <- select permissions
-  (permission, mSubject) <- case permissionSpec of
+  (permission, _mSubject) <- case permissionSpec of
     CVar (Ident permission _ _) _ -> return (permission, Nothing)
     {-
     -- FIXME: Allow subjects.
@@ -395,7 +395,7 @@ extractPermissionActions attributes = runIdentity . fmap HashSet.fromList . runL
       -> return (permission, Just (fromInteger subject))
     -}
     -- FIXME: Report malformed permission specifier.
-    other -> mzero
+    _other -> mzero
   action <- case actionName of
     "need" -> select [Need]
     "use" -> select [Need, Use]

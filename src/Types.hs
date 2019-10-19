@@ -339,9 +339,9 @@ format CompilerOutput entry = case entry of
 
 -- TODO: Convert position to URL for hyperlinked output.
 format HtmlOutput entry = case entry of
-  Note p t -> row "note" t
-  Warning p t -> row "warning" t
-  Error p t -> row "error" t
+  Note _ t -> row "note" t
+  Warning _ t -> row "warning" t
+  Error _ t -> row "error" t
   where
     row category text = concat
       ["<li class='", category, "'>", Text.unpack text, "</li>"]
