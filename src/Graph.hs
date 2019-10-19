@@ -173,7 +173,7 @@ nameMapFromTranslationUnit
   :: Config -> CTranslUnit -> NameMap
 nameMapFromTranslationUnit config
   (CTranslUnit externalDeclarations _)
-  = everything combine (mkQ mempty fromDecl) externalDeclarations
+  = foldl' combine mempty $ map fromDecl externalDeclarations
   where
 
     -- Combine name maps, preferring to preserve *declaration* position (if any)
