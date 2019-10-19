@@ -7,7 +7,6 @@ module Config
 
 import Control.Monad (mzero, void)
 import Data.Either
-import Data.Monoid -- *
 import Data.These
 import Text.Parsec
 import Text.Parsec.String

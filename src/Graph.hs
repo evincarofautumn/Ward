@@ -21,8 +21,6 @@ import qualified Data.HashSet as HashSet
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 
-import Debug.Trace
-
 -- | An 'Ident' pattern that matches the keyword that introduces Ward annotation attributes.
 -- This is a bidirectional pattern - it will match all occurrences of the keyword, and can be used to construct
 -- the keyword with an internal position (c.f. 'Language.C.Data.Ident.internalIdent')
