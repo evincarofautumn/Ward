@@ -10,7 +10,6 @@ module Check.Permissions
   , validatePermissions
   ) where
 
-import Config
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Foldable (for_, toList)
@@ -18,7 +17,6 @@ import Data.Function (fix)
 import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
 import Data.List (foldl', isSuffixOf, nub, sort)
-import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.These
 import Data.Vector.Mutable (IOVector)
@@ -360,7 +358,7 @@ propagatePermissionsNode :: (Graph.Vertex -> (Node, t1, t))
                        -> (FunctionName -> Maybe Graph.Vertex)
                        -> (Node, Site, FunctionName)
                        -> IO Bool
-propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = do
+propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, _name) = do
         let
           sites = nodeSites node
 
@@ -391,7 +389,7 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
             IOVector.write v i (beforeA <> beforeB)
             IOVector.write v (succ i) (afterA <> afterB)
 
-          processCallTree s@(Sequence a b) i v = do
+          processCallTree (Sequence a b) i v = do
             processCallTree a i v
             processCallTree b (i + callTreeBreadth a) v
 
@@ -417,7 +415,7 @@ propagatePermissionsNode graphLookup graphVertex (node, newInitialSite, name) = 
                     $ HashSet.toList before)
 
           processCallTree (Call (Just call)) i v = do
-            let (Node { nodePermissions = callPermissionsRef }, callName, _) = graphLookup call
+            let (Node { nodePermissions = callPermissionsRef }, _callName, _) = graphLookup call
             callPermissions <- readIORef callPermissionsRef
 
             -- We propagate non-conflicting permissions forward in the call tree
@@ -615,7 +613,7 @@ reportDefinition
   -> Maybe PermissionActionSet
   -> (PermissionActionSet, PermissionActionSet, FunctionName, NodeInfo)
   -> Logger ()
-reportDefinition implicitPermissions restrictions requiredPermissions (annotations, permissions, name, pos) = do
+reportDefinition implicitPermissions _restrictions requiredPermissions (annotations, permissions, name, pos) = do
 
   -- If a function has required annotations, ensure the annotation mentions all
   -- inferred permissions. Implicit permissions don't need to be annotated.
@@ -813,10 +811,6 @@ initialSite =
 -- | Convenience function for building call site info.
 site :: PermissionPresence -> Site
 site = HashSet.singleton
-
--- | Convenience function to help type inference in message formatting.
-strConcat :: [String] -> String
-strConcat = concat
 
 -- | Convenience function for testing whether we found a conflict.
 conflicting :: PermissionPresence -> Bool
