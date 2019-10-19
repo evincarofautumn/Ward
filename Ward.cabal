@@ -19,12 +19,14 @@ executable ward
                      , Check.Permissions
                      , Config
                      , DumpCallMap
+                     , InternIdents
                      , Graph
                      , ParseCallMap
                      , Orphans
                      , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
   build-depends:       base
+                     , async
                      , array
                      , bytestring
                      , containers
@@ -53,6 +55,7 @@ test-suite test
                      , Check.Permissions
                      , Config
                      , DumpCallMap
+                     , InternIdents
                      , Graph
                      , ParseCallMap
                      , Orphans
@@ -60,6 +63,7 @@ test-suite test
   ghc-options:         -Wall
   build-depends:       base
                      , HUnit
+                     , async
                      , array
                      , bytestring
                      , containers

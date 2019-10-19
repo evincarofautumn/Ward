@@ -3,29 +3,33 @@
 
 module Main (main) where
 
-import Check.Permissions (Function(..))
-import Config
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad (unless)
 import Data.Bifunctor (Bifunctor(..))
+import System.Exit (exitFailure, ExitCode(..), exitWith)
+import System.IO (hPutStrLn, stderr, stdout)
+import qualified Data.Map as Map
+import qualified Data.Text as Text
+import qualified Language.C.Parser as CParser
+import qualified System.FilePath as FP
+import qualified System.IO as IO
+import Control.Concurrent.Async
+
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
 import Language.C.Syntax.AST (CTranslUnit)
 import Language.C.System.GCC (newGCC)
-import System.Exit (exitFailure, ExitCode(..), exitWith)
-import System.IO (hPutStrLn, stderr, stdout)
-import Types
+
+import Check.Permissions (Function(..))
+import Config
+import InternIdents
 import qualified Args
 import qualified Check.Permissions as Permissions
-import qualified Data.Map as Map
-import qualified Data.Text as Text
+import qualified ParseCallMap
 import qualified DumpCallMap
 import qualified Graph
-import qualified Language.C.Parser as CParser
-import qualified ParseCallMap
-import qualified System.FilePath as FP
-import qualified System.IO as IO
+import Types
 
 {-# ANN module ("HLint: ignore Redundant do" :: String) #-}
 
@@ -44,7 +48,7 @@ main = do
         hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
         exitFailure
   logProgress args "Preprocessing and parsing..."
-  parseResults <- traverse (parseInput args) (Args.translationUnitPaths args)
+  parseResults <- mapConcurrently (parseInput args) (Args.translationUnitPaths args)
   exitResult <- case sequence parseResults of
     Right translationUnits ->
       case Args.outputAction args of
@@ -135,7 +139,8 @@ parseInput args path =
     CSourcePathClass ->
       (bimap CSourceUnitParseError CSourceProcessingUnit) <$> parseCInput args path
     CallMapPathClass ->
-      (bimap CallMapUnitParseError CallMapProcessingUnit) <$> parseGraphInput args path
+      (bimap CallMapUnitParseError callMapProcessingUnit) <$> parseGraphInput args path
+  where callMapProcessingUnit = CallMapProcessingUnit . runInternM . internCallMap
 
 data PathClass = CSourcePathClass | CallMapPathClass
 
