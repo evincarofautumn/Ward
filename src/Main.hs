@@ -5,8 +5,9 @@ module Main (main) where
 
 import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
+import Control.Monad.Trans.Except
 import Control.Monad (unless)
-import Data.Bifunctor (Bifunctor(..))
+import Control.Monad.IO.Class
 import System.Exit (exitFailure, ExitCode(..), exitWith)
 import System.IO (hPutStrLn, stderr, stdout)
 import qualified Data.Map.Strict as Map
@@ -35,11 +36,11 @@ import Types
 
 main :: IO ()
 main = do
-
   args <- Args.parse
 
   unless (null $ Args.configFilePaths args) $ do
     logProgress args "Loading config files..."
+
   config <- do
     parsedConfigs <- traverse Config.fromFile $ Args.configFilePaths args
     case sequence parsedConfigs of
@@ -47,22 +48,26 @@ main = do
       Left parseError -> do
         hPutStrLn stderr $ "Config parse error:\n" ++ show parseError
         exitFailure
+
+  exitResult <- main' args config
+  exitWith exitResult
+
+main' :: Args.Args -> Config -> IO ExitCode
+main' args config = do
   logProgress args "Preprocessing and parsing..."
-  parseResults <- mapConcurrently (parseInput args) (Args.translationUnitPaths args)
-  exitResult <- case sequence parseResults of
-    Right translationUnits ->
-      case Args.outputAction args of
-        AnalysisAction outputMode -> analyze args outputMode config translationUnits
-        GraphAction -> do
-          dumpCallGraph args config translationUnits
-          return ExitSuccess
+  parseResults <- mapConcurrently (runExceptT . parseInput args) (Args.translationUnitPaths args)
+  case sequence parseResults of
+    Right callMaps ->
+      let callMap = mconcat callMaps
+      in case Args.outputAction args of
+        AnalysisAction outputMode -> analyze args outputMode config callMap
+        GraphAction -> ExitSuccess <$ dumpCallGraph args callMap
     Left parseError -> do
       hPutStrLn stderr $ "Parse error:\n" ++ show parseError
       return (ExitFailure 1)
-  exitWith exitResult
 
-analyze :: Args.Args -> OutputMode -> Config -> [ProcessingUnit] -> IO ExitCode
-analyze args outputMode config translationUnits = do
+analyze :: Args.Args -> OutputMode -> Config -> CallMap -> IO ExitCode
+analyze args outputMode config callMap = do
   logProgress args "Checking..."
   withOutputFn (Args.outputFilePath args) $ \output -> do
     output $ formatHeader outputMode
@@ -70,8 +75,6 @@ analyze args outputMode config translationUnits = do
       entriesChan <- newChan
       _checkThread <- forkIO $ flip runLogger entriesChan $ do
         let
-          callMap = Graph.fromProcessingUnits config
-            (zip (Args.translationUnitPaths args) translationUnits)
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
               { functionPos = pos
@@ -124,23 +127,23 @@ logProgress args s = case Args.outputAction args of
   AnalysisAction CompilerOutput -> hPutStrLn stdout s
   GraphAction -> hPutStrLn stderr s
 
-dumpCallGraph :: Args.Args -> Config -> [ProcessingUnit] -> IO ()
-dumpCallGraph args config translationUnits = do
-  let callMap = Graph.fromProcessingUnits config
-        (zip (Args.translationUnitPaths args) translationUnits)
+dumpCallGraph :: Args.Args -> CallMap -> IO ()
+dumpCallGraph args callMap = do
   case Args.outputFilePath args of
     Nothing -> DumpCallMap.hPutCallMap stdout callMap
     Just path -> IO.withFile path IO.WriteMode $ \hdl ->
       DumpCallMap.hPutCallMap hdl callMap
 
-parseInput :: Args.Args -> FilePath -> IO (Either ProcessingUnitParseError ProcessingUnit)
-parseInput args path =
-  case classifyPath path of
-    CSourcePathClass ->
-      (bimap CSourceUnitParseError CSourceProcessingUnit) <$> parseCInput args path
+parseInput :: Args.Args -> FilePath -> ExceptT ProcessingUnitParseError IO CallMap
+parseInput args path = do
+  cm <- case classifyPath path of
+    CSourcePathClass -> do
+      tu <- either (throwE . CSourceUnitParseError) pure =<< liftIO (parseCInput args path)
+      pure $! Graph.fromTranslationUnit tu
     CallMapPathClass ->
-      (bimap CallMapUnitParseError callMapProcessingUnit) <$> parseGraphInput args path
-  where callMapProcessingUnit = CallMapProcessingUnit . runInternM . internCallMap
+      either (throwE . CallMapUnitParseError) pure =<< liftIO (parseGraphInput args path)
+
+  pure $! runInternM (internCallMap cm)
 
 data PathClass = CSourcePathClass | CallMapPathClass
 

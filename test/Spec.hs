@@ -267,7 +267,7 @@ wardTestWithCallmaps args check = do
   let temporaryDirectory = Nothing
   let preprocessor = newGCC $ Args.preprocessorPath args
   parseResults <- forM (Args.translationUnitPaths args)
-    $ fmap (fmap (either (Left  . CSourceUnitParseError) (Right . CSourceProcessingUnit)))
+    $ fmap (fmap (either (Left  . CSourceUnitParseError) Right))
     $ parseCFile preprocessor temporaryDirectory
     $ Args.preprocessorFlags args
   config <- do
@@ -279,8 +279,7 @@ wardTestWithCallmaps args check = do
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do
       let
-        callMap = Graph.fromProcessingUnits config
-          (zip (Args.translationUnitPaths args) translationUnits)
+        callMap = foldMap Graph.fromTranslationUnit translationUnits
       check config callMap
 
 callMapRoundtripTest :: Args -> IO ()

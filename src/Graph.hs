@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase, PatternSynonyms #-}
 
 module Graph
-  ( fromProcessingUnits
+  ( fromTranslationUnit
   , pattern WardKeyword
   ) where
 
@@ -32,39 +32,12 @@ pattern WardKeyword <- Ident WardKeywordStr _hash _ni
 -- | A String pattern that matches the keyword that introduces Ward annotation attributes.
 pattern WardKeywordStr :: String
 pattern WardKeywordStr = "ward"
-      
--- | Builds a call graph from a set of processing units.
-fromProcessingUnits :: Config -> [(FilePath, ProcessingUnit)] -> CallMap
-fromProcessingUnits config units =
-  let (cs, gs) = partitionProcessingUnits units
-      g0 :: CallMap
-      g0 = CallMap $ Map.unionsWith mergeCallMapItems $ map (getCallMap . snd) gs
-      mergeCallMapItems (n1, c1, p1) (_n2, c2, p2) =
-          (n1, c, p1 <> p2)
-        where c | notNop c1 && notNop c2 =
-                  if c1 /= c2
-                  then error $ "Multiple definitions of "++show n1
-                  else c1
-                | otherwise = simplifyCallTree (Sequence c1 c2)
-              notNop Nop = False
-              notNop _ = True
-      g' = if null cs then mempty else fromTranslationUnits config cs
-  in g0 <> g'
-
-partitionProcessingUnits :: [(a, ProcessingUnit)] -> ([(a, CTranslUnit)], [(a, CallMap)])
-partitionProcessingUnits = foldr split ([], [])
-  where
-    split (x, u) (cs,gs) =
-      case u of
-        CSourceProcessingUnit c -> ((x,c):cs, gs)
-        CallMapProcessingUnit g -> (cs, (x,g):gs)
 
 -- | Builds a call graph from a set of C translation units.
-fromTranslationUnits :: Config -> [(FilePath, CTranslUnit)] -> CallMap
-fromTranslationUnits config
+fromTranslationUnit :: CTranslUnit -> CallMap
+fromTranslationUnit
   = callMapFromNameMap
-  . nameMapFromTranslationUnit config
-  . joinTranslationUnits
+  . nameMapFromTranslationUnit
 
 -- | Joins multiple translation units into one.
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
@@ -164,8 +137,8 @@ hasStaticSpecifiers specifiers =
 ----
 
 nameMapFromTranslationUnit
-  :: Config -> CTranslUnit -> NameMap
-nameMapFromTranslationUnit _config
+  :: CTranslUnit -> NameMap
+nameMapFromTranslationUnit
   (CTranslUnit externalDeclarations _)
   = foldl' combine mempty $ map fromDecl externalDeclarations
   where

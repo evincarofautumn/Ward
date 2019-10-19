@@ -162,7 +162,21 @@ type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 -- function instead of the whole definition.
 --
 newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallTree Ident, PermissionActionSet) }
-  deriving (Show, Semigroup, Monoid, Generic)
+  deriving (Show, Monoid, Generic)
+
+instance Semigroup CallMap where
+  CallMap x <> CallMap y =
+      CallMap $ Map.unionWith mergeCallMapItems x y
+    where
+      mergeCallMapItems (n1, c1, p1) (_n2, c2, p2) =
+          (n1, c, p1 <> p2)
+        where c | notNop c1 && notNop c2 =
+                  if c1 /= c2
+                  then error $ "Multiple definitions of "++show n1
+                  else c1
+                | otherwise = simplifyCallTree (Sequence c1 c2)
+              notNop Nop = False
+              notNop _ = True
 
 instance A.FromJSON CallMap
 instance A.ToJSON CallMap
@@ -242,12 +256,6 @@ callTreeIndex index tree = breadthFirst tree !! index
 --------------------------------------------------------------------------------
 -- Input
 --------------------------------------------------------------------------------
-
--- | A processing unit is a single input file that must be consumed by Ward.
--- A processing unit is either a parsed C translation unit, or a precomputed callgraph.
-data ProcessingUnit =
-  CSourceProcessingUnit !CTranslUnit
-  | CallMapProcessingUnit !CallMap
 
 -- | An error that may occur while parsing a callmap graph file.
 type CallMapParseError = String
