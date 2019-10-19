@@ -66,21 +66,17 @@ fromTranslationUnits config
   . nameMapFromTranslationUnit config
   . joinTranslationUnits
 
--- | When forced, whnf each element of the given list.
-whnfList :: [a] -> ()
-whnfList = foldl' (\() x -> x `seq` ()) ()
-
 -- | Joins multiple translation units into one.
 joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
 joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _) =
   let
     f (path, CTranslUnit externalDeclarations _) =
-      whnfList externalDeclarations `seq` prefixStatics path externalDeclarations
+      externalDeclarations `deepseq` prefixStatics path externalDeclarations
     tus' = concatMap f tus
   in
     -- Why can't we just deepseq tus'? Because language-c doesn't provide
     -- NFData instances :-(
-    whnfList tus' `seq` CTranslUnit tus' firstLocation
+    tus' `deepseq` CTranslUnit tus' firstLocation
 joinTranslationUnits [] = error "joinTranslationUnits: empty input"
 
 -- | Prefixes static function names with the name of the translation unit where
