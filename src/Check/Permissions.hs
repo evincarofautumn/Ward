@@ -779,6 +779,7 @@ validatePermissions config =
   report
   . Map.filter (not . null . snd)
   . Map.map (\(ni,_callTree,actions) -> (ni, validatePermissionActionSet config actions))
+  . getCallMap
   where
     report :: Map.Map Ident (NodeInfo, [PermissionName]) -> [Entry]
     report = map (\(i, (ni, names)) -> Warning ni (explain i names)) . Map.toList

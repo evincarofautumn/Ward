@@ -90,7 +90,7 @@ parser :: Parser CallMap
 parser = between ws eof callmapForm
 
 callmapForm :: Parser CallMap
-callmapForm = theForm "callmap" (Map.fromList <$> many functionForm)
+callmapForm = CallMap <$> theForm "callmap" (Map.fromList <$> many functionForm)
 
 type CallMapItem = (NodeInfo, CallTree Ident, PermissionActionSet)
 

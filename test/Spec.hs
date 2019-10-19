@@ -257,7 +257,7 @@ wardTest args check =
               , functionPermissions = permissions
               , functionCalls = nameFromIdent <$> calls
               })
-            $ Map.toList callMap
+            $ Map.toList $ getCallMap callMap
             where
               nameFromIdent (Ident name _ _) = Text.pack name
         Permissions.process functions config
@@ -294,7 +294,7 @@ callMapRoundtripTest args =
     txt = Data.Text.Lazy.Encoding.decodeUtf8With Data.Text.Encoding.Error.lenientDecode bs
     parseResult = ParseCallMap.fromSource (show (Args.translationUnitPaths args)) txt
   in
-    parseResult `shouldBeUptoPos` Right callMap
+    fmap getCallMap parseResult `shouldBeUptoPos` Right (getCallMap callMap)
 
   where
     shouldBeUptoPos x y = fmap simplifiedPosInfo x `shouldBe` fmap simplifiedPosInfo y

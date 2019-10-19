@@ -40,7 +40,7 @@ fromProcessingUnits :: Config -> [(FilePath, ProcessingUnit)] -> CallMap
 fromProcessingUnits config units =
   let (cs, gs) = partitionProcessingUnits units
       g0 :: CallMap
-      g0 = Map.unionsWith mergeCallMapItems $ map snd gs
+      g0 = CallMap $ Map.unionsWith mergeCallMapItems $ map (getCallMap . snd) gs
       mergeCallMapItems (n1, c1, p1) (n2, c2, p2) =
           (n1, c, p1 <> p2)
         where c | notNop c1 && notNop c2 =
@@ -219,7 +219,7 @@ nameMapFromTranslationUnit config
 -- | Converts a 'NameMap' into a 'CallMap' by converting function bodies into
 -- 'CallTree's.
 callMapFromNameMap :: NameMap -> CallMap
-callMapFromNameMap = Map.mapWithKey fromEntry
+callMapFromNameMap = CallMap . Map.mapWithKey fromEntry
   where
     fromEntry name (pos, mDef, permissions) = let
       calls = maybe Nop fromFunction mDef

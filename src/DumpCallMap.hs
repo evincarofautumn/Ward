@@ -1,7 +1,7 @@
 {-# language ScopedTypeVariables #-}
 module DumpCallMap (encodeCallMap, hPutCallMap) where
 
-import Types (CallMap
+import Types (CallMap(..)
              , CallTree(..)
              , PermissionAction(..)
              , PermissionActionSet
@@ -28,7 +28,7 @@ type CallMapItem = (NodeInfo, CallTree Ident, PermissionActionSet)
 
 -- | Encode the given callmap as a "Data.ByteString
 encodeCallMap :: CallMap -> B.Builder
-encodeCallMap = form "callmap" True . Map.foldMapWithKey encodeCallMapItem
+encodeCallMap (CallMap cm) = form "callmap" True $ Map.foldMapWithKey encodeCallMapItem cm
 
 -- | @hPutCallMap handle callmap@ writes @callmap@ to the I/O handle @handle@.
 -- The representation preserves all the source attributes of the underlying C file.

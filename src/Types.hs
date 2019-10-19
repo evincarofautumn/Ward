@@ -157,7 +157,8 @@ type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 -- | Built from a 'NameMap', a 'CallMap' contains a compact 'CallTree' for each
 -- function instead of the whole definition.
 --
-type CallMap = Map Ident (NodeInfo, CallTree Ident, PermissionActionSet)
+newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallTree Ident, PermissionActionSet) }
+  deriving (Show, Semigroup, Monoid)
 
 -- | A 'CallTree' describes the calls that a function makes in its definition. A
 -- 'Call' leaf node refers to a call site; a 'Nop' leaf refers to a statement

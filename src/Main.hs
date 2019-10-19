@@ -75,7 +75,7 @@ analyze args outputMode config translationUnits = do
               , functionPermissions = permissions
               , functionCalls = nameFromIdent <$> calls
               })
-            $ Map.toList callMap
+            $ Map.toList $ getCallMap callMap
             where
               nameFromIdent (Ident name _ _) = Text.pack name
         mapM_ (record True) $ Permissions.validatePermissions config callMap
