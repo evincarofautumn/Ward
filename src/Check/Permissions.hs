@@ -25,7 +25,7 @@ import Language.C.Data.Position (posFile)
 import Types
 import qualified Data.Graph as Graph
 import qualified Data.HashSet as HashSet
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Data.Tree as Tree
 import qualified Data.Vector as Vector

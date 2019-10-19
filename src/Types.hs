@@ -14,8 +14,7 @@ import Control.Monad.IO.Class (MonadIO(..))
 import qualified Data.Aeson as A
 import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
-import Data.Map (Map)
-import Data.Monoid ((<>))
+import Data.Map.Strict (Map)
 import qualified Data.Semigroup
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
@@ -25,7 +24,7 @@ import Language.C.Data.Node (NodeInfo(..))
 import Language.C.Data.Position (posFile, posRow)
 import Language.C.Syntax.AST -- *
 import qualified Language.C.Parser as CParser
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 
 import Orphans ()

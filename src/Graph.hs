@@ -18,7 +18,7 @@ import qualified Language.C.Data.Ident
 import Language.C.Syntax.AST -- *
 import Types
 import qualified Data.HashSet as HashSet
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 
 -- | An 'Ident' pattern that matches the keyword that introduces Ward annotation attributes.

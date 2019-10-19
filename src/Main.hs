@@ -9,7 +9,7 @@ import Control.Monad (unless)
 import Data.Bifunctor (Bifunctor(..))
 import System.Exit (exitFailure, ExitCode(..), exitWith)
 import System.IO (hPutStrLn, stderr, stdout)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as Text
 import qualified Language.C.Parser as CParser
 import qualified System.FilePath as FP
