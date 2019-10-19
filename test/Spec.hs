@@ -10,7 +10,6 @@ import Data.Foldable (traverse_)
 import Data.List (nub)
 import Data.Maybe (fromJust, isJust)
 import Data.Text (Text)
-import Data.These
 import Data.Traversable (forM)
 import Language.C (parseCFile)
 import Language.C.Data.Ident (Ident(Ident))
@@ -120,19 +119,19 @@ spec = do
       configTest
         ".enforce \"foo.c\";"
         $ Right $ mempty
-        { configEnforcements = [This "foo.c"] }
+        { configEnforcements = [EnforcePath "foo.c"] }
 
     it "accepts enforcement with name" $ do
       configTest
         ".enforce bar;"
         $ Right $ mempty
-        { configEnforcements = [That "bar"] }
+        { configEnforcements = [EnforceFunction "bar"] }
 
     it "accepts enforcement with path and name" $ do
       configTest
         ".enforce \"foo.c\" bar;"
         $ Right $ mempty
-        { configEnforcements = [These "foo.c" "bar"] }
+        { configEnforcements = [EnforcePathFunction "foo.c" "bar"] }
 
   describe "with simple errors" $ do
 

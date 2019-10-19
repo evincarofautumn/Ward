@@ -7,7 +7,6 @@ module Config
 
 import Control.Monad (mzero, void)
 import Data.Either
-import Data.These
 import Text.Parsec
 import Text.Parsec.String
 import Types
@@ -52,9 +51,9 @@ enforcement = lexeme (string ".enforce") *> do
   mName <- optionMaybe name
   operator ';'
   case (mPath, mName) of
-    (Just path, Just function) -> pure $ These path $ Text.pack function
-    (Just path, Nothing) -> pure $ This path
-    (Nothing, Just function) -> pure $ That $ Text.pack function
+    (Just path, Just function) -> pure $ EnforcePathFunction path (Text.pack function)
+    (Just path, Nothing) -> pure $ EnforcePath path
+    (Nothing, Just function) -> pure $ EnforceFunction (Text.pack function)
     _ -> mzero
 
 declaration :: Parser (PermissionName, Declaration)

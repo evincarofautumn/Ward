@@ -18,7 +18,6 @@ import Data.Map (Map)
 import Data.Monoid ((<>))
 import qualified Data.Semigroup
 import Data.Text (Text)
-import Data.These
 import GHC.Exts (IsString(..))
 import GHC.Generics (Generic)
 import Language.C.Data.Ident (Ident(..))
@@ -528,17 +527,20 @@ instance Show Expression where
 -- | An 'Enforcement', declared in a config file, describes the functions that
 -- Ward will force to be fully annotated. It may be:
 --
--- * @'This' path@: enforce annotations for all functions declared or defined in
---   a path ending with @path@. (E.g., a public header.)
+-- * @EnforcePath path@: enforce annotations for all functions declared or
+--   defined in a path ending with @path@. (E.g., a public header.)
 --
--- * @'That' name@: enforce annotations for all functions named @name@. (E.g., a
---   particular private function.)
+-- * @'EnforceFunction' name@: enforce annotations for all functions named
+--   @name@. (E.g., a particular private function.)
 --
--- * @'These' path name@ enforce annotations for a function named @name@ only if
---   declared or defined in the given @path@. (E.g., @static@ functions with
---   non-unique names.)
+-- * @'EnforcePathFunction' path name@ enforce annotations for a function named
+--   @name@ only if declared or defined in the given @path@. (E.g., @static@
+--   functions with non-unique names.)
 --
-type Enforcement = These FilePath FunctionName
+data Enforcement = EnforcePath FilePath
+                 | EnforceFunction FunctionName
+                 | EnforcePathFunction FilePath FunctionName
+                 deriving (Eq, Show)
 
 -- | A description is just an arbitrary docstring read from a config file.
 type Description = Text

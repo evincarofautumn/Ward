@@ -18,7 +18,6 @@ import Data.Graph (Graph, graphFromEdges)
 import Data.IORef
 import Data.List (foldl', isSuffixOf, nub, sort)
 import Data.Monoid ((<>))
-import Data.These
 import Data.Vector.Mutable (IOVector)
 import Language.C.Data.Ident (Ident)
 import Language.C.Data.Node (NodeInfo, posOfNode)
@@ -243,9 +242,9 @@ process functions config = do
     requiresAnnotation :: FunctionName -> NodeInfo -> Bool
     requiresAnnotation name info = or
       [ case enforcement of
-        This path' -> path' `isSuffixOf` path
-        That name' -> name == name'
-        These path' name' -> path' `isSuffixOf` path && name == name'
+        EnforcePath path' -> path' `isSuffixOf` path
+        EnforceFunction name' -> name == name'
+        EnforcePathFunction path' name' -> path' `isSuffixOf` path && name == name'
       | enforcement <- configEnforcements config
       ]
       where

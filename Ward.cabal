@@ -38,7 +38,6 @@ executable ward
                      , pretty
                      , syb
                      , text
-                     , these
                      , transformers
                      , unordered-containers
                      , vector
@@ -74,7 +73,6 @@ test-suite test
                      , pretty
                      , syb
                      , text
-                     , these
                      , transformers
                      , unordered-containers
                      , vector
