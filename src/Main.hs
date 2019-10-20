@@ -3,7 +3,6 @@
 
 module Main (main) where
 
-import Control.Concurrent (forkIO)
 import Control.Concurrent.Chan (newChan, readChan)
 import Control.Monad.Trans.Except
 import Control.Monad (unless)
@@ -73,7 +72,7 @@ analyze args outputMode config callMap = do
     output $ formatHeader outputMode
     do
       entriesChan <- newChan
-      _checkThread <- forkIO $ flip runLogger entriesChan $ do
+      checkThread <- async $ flip runLogger entriesChan $ do
         let
           functions = map
             (\ (name, (pos, calls, permissions)) -> Function
@@ -88,6 +87,8 @@ analyze args outputMode config callMap = do
         mapM_ (record True) $ Permissions.validatePermissions config callMap
         Permissions.process functions config
         endLog
+
+      link checkThread
 
       let
         loop !warnings !errors seen = do
