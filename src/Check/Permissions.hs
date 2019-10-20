@@ -47,6 +47,7 @@ data Function = Function
   -- | A tree of callees of this function.
   , functionCalls :: !(CallTree FunctionName)
   }
+  deriving (Show)
 
 -- | A node in the call graph, representing a function and information about
 -- permissions at each of its call sites.
