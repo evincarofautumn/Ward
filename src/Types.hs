@@ -162,7 +162,11 @@ type NameMap = Map Ident (NodeInfo, Maybe CFunDef, PermissionActionSet)
 -- function instead of the whole definition.
 --
 newtype CallMap = CallMap { getCallMap :: Map Ident (NodeInfo, CallTree Ident, PermissionActionSet) }
-  deriving (Show, Monoid, Generic)
+  deriving (Show, Generic)
+
+instance Monoid CallMap where
+  mempty = CallMap mempty
+  mappend = (<>)
 
 instance Semigroup CallMap where
   CallMap x <> CallMap y =
