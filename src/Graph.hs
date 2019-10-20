@@ -34,28 +34,17 @@ pattern WardKeywordStr :: String
 pattern WardKeywordStr = "ward"
 
 -- | Builds a call graph from a set of C translation units.
-fromTranslationUnit :: CTranslUnit -> CallMap
-fromTranslationUnit
+fromTranslationUnit :: FilePath -> CTranslUnit -> CallMap
+fromTranslationUnit path
   = callMapFromNameMap
   . nameMapFromTranslationUnit
-
--- | Joins multiple translation units into one.
-joinTranslationUnits :: [(FilePath, CTranslUnit)] -> CTranslUnit
-joinTranslationUnits tus@((_, CTranslUnit _ firstLocation) : _) =
-  let
-    f (path, CTranslUnit externalDeclarations _) =
-      externalDeclarations `deepseq` prefixStatics path externalDeclarations
-    tus' = concatMap f tus
-  in
-    -- Why can't we just deepseq tus'? Because language-c doesn't provide
-    -- NFData instances :-(
-    tus' `deepseq` CTranslUnit tus' firstLocation
-joinTranslationUnits [] = error "joinTranslationUnits: empty input"
+  . prefixStatics path
 
 -- | Prefixes static function names with the name of the translation unit where
 -- they were defined.
-prefixStatics :: FilePath -> [CExtDecl] -> [CExtDecl]
-prefixStatics path decls = statics `deepseq` map prefixOne decls
+prefixStatics :: FilePath -> CTranslUnit -> CTranslUnit
+prefixStatics path (CTranslUnit decls x) =
+    CTranslUnit (statics `deepseq` map prefixOne decls) x
   where
     statics :: HashSet.HashSet String
     statics =

@@ -140,7 +140,7 @@ parseInput args path = do
   cm <- case classifyPath path of
     CSourcePathClass -> do
       tu <- either (throwE . CSourceUnitParseError) pure =<< liftIO (parseCInput args path)
-      pure $! Graph.fromTranslationUnit tu
+      pure $! Graph.fromTranslationUnit path tu
     CallMapPathClass ->
       either (throwE . CallMapUnitParseError) pure =<< liftIO (parseGraphInput args path)
 

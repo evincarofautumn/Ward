@@ -279,7 +279,8 @@ wardTestWithCallmaps args check = do
     Left parseError -> assertFailure $ "Parse error: " ++ show parseError
     Right translationUnits -> do
       let
-        callMap = foldMap Graph.fromTranslationUnit translationUnits
+        callMap = foldMap (uncurry Graph.fromTranslationUnit)
+                          (zip (Args.translationUnitPaths args) translationUnits)
       check config callMap
 
 callMapRoundtripTest :: Args -> IO ()
