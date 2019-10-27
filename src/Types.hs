@@ -14,6 +14,7 @@ import Data.HashSet (HashSet)
 import Data.Hashable (Hashable(..))
 import Data.Map (Map)
 import Data.Monoid ((<>))
+import qualified Data.Semigroup
 import Data.Text (Text)
 import Data.These
 import GHC.Exts (IsString(..))
@@ -407,11 +408,14 @@ data Config = Config
   } deriving (Eq, Show)
 
 -- Multiple configs may be merged.
-instance Monoid Config where
-  mempty = Config mempty mempty
-  mappend (Config declA enfA) (Config declB enfB) = Config
+instance Data.Semigroup.Semigroup Config where
+  (Config declA enfA) <> (Config declB enfB) = Config
     (Map.unionWith (<>) declA declB)
     (enfA <> enfB)
+
+instance Monoid Config where
+  mempty = Config mempty mempty
+  mappend = (Data.Semigroup.<>)
 
 -- | A 'Declaration' describes a permission that the user wants to check. It may
 -- be @implicit@, in which case it is granted by default to every function that
@@ -424,9 +428,8 @@ data Declaration = Declaration
   , declRestrictions :: [(Expression, Maybe Description)]
   } deriving (Eq, Show)
 
-instance Monoid Declaration where
-  mempty = Declaration False Nothing mempty
-  mappend a b = Declaration
+instance Data.Semigroup.Semigroup Declaration where
+  a <> b = Declaration
     { declImplicit = declImplicit a || declImplicit b
     , declDescription = case (declDescription a, declDescription b) of
       (Just da, Just db) -> Just (da <> "; " <> db)
@@ -435,6 +438,10 @@ instance Monoid Declaration where
       _ -> Nothing
     , declRestrictions = declRestrictions a <> declRestrictions b
     }
+
+instance Monoid Declaration where
+  mempty = Declaration False Nothing mempty
+  mappend = (Data.Semigroup.<>)
 
 -- | A 'Restriction', declared in a config file, describes /relationships/
 -- between permissions. For instance, a user might write a restriction like this
