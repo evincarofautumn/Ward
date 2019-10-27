@@ -11,10 +11,11 @@
 
   * *f*() &mdash; a call to *f*
 
-  * *f*(); *g*() &mdash; a call to *f* followed by a call to *g*
+  * *e*<sub>1</sub>; *e*<sub>2</sub> &mdash; the term *e*<sub>1</sub> separated
+    from *e*<sub>2</sub> by a sequence point
 
-  * *f*() | *g*() &mdash; a call to *f* or a call to *g*, in separate
-    conditional branches
+  * *e*<sub>1</sub> | *e*<sub>2</sub> &mdash; the term *e*<sub>1</sub> in a
+    parallel conditional branch with *e*<sub>2</sub>
 
 * &Delta; &mdash; global declaration context
 
