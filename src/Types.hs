@@ -20,6 +20,7 @@ import Data.Hashable (Hashable(..))
 import Data.Map.Strict (Map)
 import Data.Monoid ((<>), Endo(..))
 import qualified Data.Semigroup
+import Data.Semigroup (Semigroup)
 import Data.Text (Text)
 import GHC.Exts (IsString(..))
 import GHC.Generics (Generic)

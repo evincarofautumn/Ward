@@ -7,6 +7,7 @@ module Config
 
 import Control.Monad (mzero, void)
 import Data.Either
+import Data.Semigroup ((<>))
 import Text.Parsec
 import Text.Parsec.String
 import Types
