@@ -12,6 +12,7 @@ category:            Language
 build-type:          Simple
 tested-with:         GHC==8.4.3, GHC==8.6.5, GHC==8.8.1
 cabal-version:       >=1.10
+extra-source-files:  test/*.c, test/*.h, test/*.config
 
 executable ward
   hs-source-dirs:      src
