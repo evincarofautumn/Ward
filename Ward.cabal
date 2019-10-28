@@ -1,7 +1,8 @@
 name:                Ward
 version:             0.1.0.0
 synopsis:            Static permission checker for C programs.
-description:         See README.md
+description:         Ward is a static permission checker for C programs. See
+                     the README for details.
 homepage:            https://github.com/evincarofautumn/ward#readme
 license:             MIT
 license-file:        LICENSE
@@ -28,7 +29,7 @@ executable ward
                      , Orphans
                      , Types
   ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall
-  build-depends:       base
+  build-depends:       base < 5
                      , aeson
                      , async
                      , array
@@ -66,7 +67,7 @@ test-suite test
                      , Orphans
                      , Types
   ghc-options:         -Wall
-  build-depends:       base
+  build-depends:       base < 5
                      , HUnit
                      , aeson
                      , async
