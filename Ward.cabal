@@ -39,6 +39,7 @@ executable ward
                      , optparse-applicative
                      , parsec
                      , pretty
+                     , semigroups
                      , syb
                      , text
                      , transformers
@@ -77,6 +78,7 @@ test-suite test
                      , optparse-applicative
                      , parsec
                      , pretty
+                     , semigroups
                      , syb
                      , text
                      , transformers

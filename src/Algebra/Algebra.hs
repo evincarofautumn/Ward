@@ -22,6 +22,7 @@ import qualified Data.HashMap.Strict as HashMap
 import qualified Data.HashSet as HashSet
 import qualified Data.Set as Set
 import qualified Data.Map as Map
+import Data.Semigroup (Semigroup(..))
 
 -- | A partial ordering on sets is a set equipped with a binary relation 'leq' that obeys
 -- the following laws
