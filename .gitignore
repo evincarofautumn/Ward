@@ -2,4 +2,5 @@
 /cabal.sandbox.config
 /.cabal-sandbox/
 /dist/
+/dist-newstyle/
 /.stack-work/
