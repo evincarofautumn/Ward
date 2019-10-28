@@ -35,7 +35,7 @@ executable ward
                      , deepseq
                      , filepath
                      , hashable
-                     , language-c >= 0.7.2
+                     , language-c >= 0.8
                      , optparse-applicative
                      , parsec
                      , pretty
